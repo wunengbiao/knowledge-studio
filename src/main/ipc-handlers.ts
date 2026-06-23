@@ -4,6 +4,7 @@ import { DocumentService } from './services/document-service'
 import { SearchService } from './services/search-service'
 import { GraphService } from './services/graph-service'
 import { SettingsService } from './services/settings-service'
+import { ChatService } from './services/chat-service'
 import { VectorStore } from './services/vector-store'
 import { embeddingService } from './services/embedding-service'
 import { pdfOcrService } from './services/pdf-ocr-service'
@@ -13,6 +14,7 @@ const docService = new DocumentService()
 const searchService = new SearchService()
 const graphService = new GraphService()
 const settingsService = new SettingsService()
+const chatService = new ChatService()
 
 export { docService }
 
@@ -182,6 +184,42 @@ export function registerIpcHandlers(): void {
       .catch((e) => console.error('[embedding:retry] 失败:', e))
     return true
   })
+
+  // ─── Chat Conversations ───────────────────────────────
+  ipcMain.handle('conversation:list', async () => chatService.list())
+
+  ipcMain.handle('conversation:create', async (_e, params) => chatService.create(params))
+
+  ipcMain.handle('conversation:delete', async (_e, { id }) => chatService.delete(id))
+
+  ipcMain.handle('conversation:rename', async (_e, { id, name }) => chatService.rename(id, name))
+
+  ipcMain.handle('conversation:get', async (_e, { id }) => chatService.get(id))
+
+  ipcMain.handle('conversation:send', async (_e, params) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    try {
+      const result = await chatService.sendMessage(params, {
+        onDelta: (assistantMessageId, delta) => {
+          win?.webContents.send('chat:stream-delta', { assistantMessageId, delta })
+        },
+        onDone: (assistantMessageId, content, createdAt) => {
+          win?.webContents.send('chat:stream-done', { assistantMessageId, content, createdAt })
+        },
+        onError: (assistantMessageId, error) => {
+          win?.webContents.send('chat:error', { error, assistantMessageId })
+        }
+      })
+      return result
+    } catch (e: any) {
+      win?.webContents.send('chat:error', { error: e.message || '请求失败' })
+      throw e
+    }
+  })
+
+  ipcMain.handle('conversation:messages', async (_e, { conversationId }) =>
+    chatService.getMessages(conversationId)
+  )
 
   // ─── File Dialog ──────────────────────────────────────
   ipcMain.handle('dialog:open-file', async (_e, { filters }) => {

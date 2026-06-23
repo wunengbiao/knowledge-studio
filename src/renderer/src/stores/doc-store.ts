@@ -24,7 +24,7 @@ interface DocState {
   currentKbId: string | null
 
   loadDocuments: (kbId: string) => Promise<void>
-  uploadFile: (kbId: string, sourceType: 'docx' | 'pdf' | 'txt') => Promise<void>
+  uploadFile: (kbId: string, sourceType: 'docx' | 'pdf' | 'text') => Promise<void>
   importUrl: (kbId: string, url: string) => Promise<void>
   deleteDocument: (docId: string) => Promise<void>
   retryEmbedding: (docId: string) => Promise<void>
@@ -59,12 +59,22 @@ export const useDocStore = create<DocState>((set, get) => ({
       filters: [
         sourceType === 'docx'
           ? { name: 'Word Documents', extensions: ['docx'] }
-          : sourceType === 'txt'
-            ? { name: 'Text Files', extensions: ['txt'] }
+          : sourceType === 'text'
+            ? { name: 'Text / Markdown', extensions: ['txt', 'md', 'markdown'] }
             : { name: 'PDF Documents', extensions: ['pdf'] }
       ]
     })
     if (!filePath) return
+
+    const lowerPath = filePath.toLowerCase()
+    const actualSourceType: 'docx' | 'pdf' | 'txt' | 'md' =
+      sourceType === 'docx'
+        ? 'docx'
+        : sourceType === 'pdf'
+          ? 'pdf'
+          : lowerPath.endsWith('.md') || lowerPath.endsWith('.markdown')
+            ? 'md'
+            : 'txt'
 
     const mySeq = ++uploadSeq
     set({ uploading: true, uploadProgress: { current: 0, total: 100, status: 'Starting...' } })
@@ -75,7 +85,11 @@ export const useDocStore = create<DocState>((set, get) => ({
     })
 
     try {
-      const doc = await window.electronAPI.invoke('doc:upload', { kbId, filePath, sourceType })
+      const doc = await window.electronAPI.invoke('doc:upload', {
+        kbId,
+        filePath,
+        sourceType: actualSourceType
+      })
       set((s) => ({ documents: [doc, ...s.documents], uploading: false }))
       useKBStore.getState().loadKnowledgeBases()
       setTimeout(() => {

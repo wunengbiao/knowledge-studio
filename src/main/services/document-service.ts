@@ -90,7 +90,7 @@ export class DocumentService {
   async upload(
     kbId: string,
     filePath: string,
-    sourceType: 'docx' | 'pdf' | 'txt',
+    sourceType: 'docx' | 'pdf' | 'txt' | 'md',
     onProgress?: (current: number, total: number, status: string) => void,
     options?: { mistralOcr?: MistralOcrConfig }
   ): Promise<Document> {
@@ -107,6 +107,9 @@ export class DocumentService {
     } else if (sourceType === 'txt') {
       text = readFileSync(filePath, 'utf-8')
       title = filePath.split('/').pop()?.replace(/\.txt$/i, '') || 'Untitled'
+    } else if (sourceType === 'md') {
+      text = readFileSync(filePath, 'utf-8')
+      title = filePath.split('/').pop()?.replace(/\.(md|markdown)$/i, '') || 'Untitled'
     } else {
       const useOcr = !!options?.mistralOcr?.apiKey
       if (useOcr) {

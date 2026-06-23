@@ -20,7 +20,7 @@ export interface Document {
   kbId: string
   title: string
   source: string
-  sourceType: 'docx' | 'pdf' | 'txt' | 'url'
+  sourceType: 'docx' | 'pdf' | 'txt' | 'md' | 'url'
   content: string
   chunks: Chunk[]
   metadata: Record<string, string>
@@ -70,6 +70,33 @@ export interface CommunityReport {
   summary: string
   entities: string[]
   relations: string[]
+}
+
+export interface Conversation {
+  id: string
+  name: string
+  kbIds: string[]
+  createdAt: string
+  updatedAt: string
+  messageCount: number
+}
+
+export interface MessageCitation {
+  index: number
+  chunkId: string
+  docId: string
+  docTitle: string
+  content: string
+  score: number
+}
+
+export interface Message {
+  id: string
+  conversationId: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+  citations?: MessageCitation[]
 }
 
 export interface EmbeddingPreset {

@@ -5,7 +5,10 @@ import type {
   GraphEntity,
   GraphRelation,
   CommunityReport,
-  AppSettings
+  AppSettings,
+  Conversation,
+  Message,
+  MessageCitation
 } from './types'
 
 export interface IpcChannels {
@@ -31,7 +34,7 @@ export interface IpcChannels {
   // Documents
   'doc:list': { request: { kbId: string }; response: Document[] }
   'doc:upload': {
-    request: { kbId: string; filePath: string; sourceType: 'docx' | 'pdf' | 'txt' }
+    request: { kbId: string; filePath: string; sourceType: 'docx' | 'pdf' | 'txt' | 'md' }
     response: Document
   }
   'doc:import-url': { request: { kbId: string; url: string }; response: Document }
@@ -79,9 +82,24 @@ export interface IpcChannels {
     response: string | null
   }
 
+  // Chat Conversations
+  'conversation:list': { request: void; response: Conversation[] }
+  'conversation:create': { request: { kbIds?: string[] }; response: Conversation }
+  'conversation:delete': { request: { id: string }; response: boolean }
+  'conversation:rename': { request: { id: string; name: string }; response: Conversation }
+  'conversation:get': { request: { id: string }; response: { conversation: Conversation; messages: Message[] } | null }
+  'conversation:send': {
+    request: { conversationId: string; message: string; kbIds: string[]; rerankEnabled: boolean; topK: number }
+    response: { userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }
+  }
+  'conversation:messages': { request: { conversationId: string }; response: Message[] }
+
   // Progress events (main → renderer)
   'progress:indexing': { request: void; response: { kbId: string; current: number; total: number; status: string } }
   'progress:embedding': { request: void; response: { kbId: string; current: number; total: number; status: string } }
   'progress:doc-embedding': { request: void; response: { docId: string; current: number; total: number; status: string } }
   'progress:backfill': { request: void; response: { current: number; total: number; status: string } }
+  'chat:error': { request: void; response: { error: string; assistantMessageId?: string } }
+  'chat:stream-delta': { request: void; response: { assistantMessageId: string; delta: string } }
+  'chat:stream-done': { request: void; response: { assistantMessageId: string; content: string; createdAt: string } }
 }

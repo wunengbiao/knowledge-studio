@@ -201,12 +201,12 @@ export function KnowledgeBasePage() {
             上传 PDF
           </button>
           <button
-            onClick={() => kbId && uploadFile(kbId, 'txt')}
+            onClick={() => kbId && uploadFile(kbId, 'text')}
             disabled={uploading}
             className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-300 hover:bg-blue-50/50 transition-all disabled:opacity-50"
           >
             <FileText className="w-4 h-4 text-gray-500" />
-            上传 TXT
+            上传 TXT/MD
           </button>
           <button
             onClick={() => setShowUrlInput(!showUrlInput)}
@@ -288,7 +288,7 @@ export function KnowledgeBasePage() {
                   <FileText className="w-5 h-5 text-blue-500 shrink-0" />
                 ) : doc.sourceType === 'pdf' ? (
                   <FileType className="w-5 h-5 text-red-500 shrink-0" />
-                ) : doc.sourceType === 'txt' ? (
+                ) : doc.sourceType === 'txt' || doc.sourceType === 'md' ? (
                   <FileText className="w-5 h-5 text-gray-500 shrink-0" />
                 ) : (
                   <Globe className="w-5 h-5 text-emerald-500 shrink-0" />
