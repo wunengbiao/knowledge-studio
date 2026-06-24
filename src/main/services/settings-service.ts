@@ -21,9 +21,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   dataDir: '',
   embeddingPresets: [],
   rerankPresets: [],
+  llmPresets: [],
   mistralApiKey: '',
   mistralApiUrl: 'https://api.mistral.ai/v1/ocr',
-  mistralOcrModel: 'mistral-ocr-latest'
+  mistralOcrModel: 'mistral-ocr-latest',
+  userAvatar: ''
 }
 
 export class SettingsService {

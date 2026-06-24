@@ -383,4 +383,31 @@ export class SearchService {
       throw new Error(`ReRank API 返回错误: HTTP ${response.status}`)
     }
   }
+
+  async testLlm(config: { apiUrl: string; apiKey: string; model: string }): Promise<void> {
+    if (!config.apiUrl) {
+      throw new Error('未配置 LLM API 地址')
+    }
+    if (!config.apiKey) {
+      throw new Error('未配置 LLM API Key')
+    }
+    const response = await net.fetch(config.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`
+      },
+      body: JSON.stringify({
+        model: config.model || 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+        stream: false
+      }),
+      signal: AbortSignal.timeout(15000)
+    })
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new Error(`LLM API 返回错误: HTTP ${response.status} ${text.slice(0, 200)}`)
+    }
+  }
 }

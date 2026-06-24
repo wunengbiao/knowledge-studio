@@ -13,6 +13,7 @@ interface ConversationRow {
   created_at: string
   updated_at: string
   message_count: number
+  llm_preset_id: string | null
 }
 
 interface MessageRow {
@@ -70,11 +71,17 @@ export class ChatService {
   }
 
   private migrate(): void {
-    const cols = this.db
+    const msgCols = this.db
       .prepare("PRAGMA table_info('messages')")
       .all() as { name: string }[]
-    if (!cols.some((c) => c.name === 'citations')) {
+    if (!msgCols.some((c) => c.name === 'citations')) {
       this.db.exec("ALTER TABLE messages ADD COLUMN citations TEXT")
+    }
+    const convCols = this.db
+      .prepare("PRAGMA table_info('conversations')")
+      .all() as { name: string }[]
+    if (!convCols.some((c) => c.name === 'llm_preset_id')) {
+      this.db.exec("ALTER TABLE conversations ADD COLUMN llm_preset_id TEXT")
     }
   }
 
@@ -85,16 +92,16 @@ export class ChatService {
     return rows.map(this.rowToConversation)
   }
 
-  create(params: { kbIds?: string[] }): Conversation {
+  create(params: { kbIds?: string[]; llmPresetId?: string }): Conversation {
     const id = uuid()
     const now = new Date().toISOString()
     const kbIds = params.kbIds ?? []
     this.db
       .prepare(
-        `INSERT INTO conversations (id, name, kb_ids, created_at, updated_at, message_count)
-         VALUES (?, ?, ?, ?, ?, 0)`
+        `INSERT INTO conversations (id, name, kb_ids, created_at, updated_at, message_count, llm_preset_id)
+         VALUES (?, ?, ?, ?, ?, 0, ?)`
       )
-      .run(id, '新对话', JSON.stringify(kbIds), now, now)
+      .run(id, '新对话', JSON.stringify(kbIds), now, now, params.llmPresetId ?? null)
     return this.get(id)?.conversation!
   }
 
@@ -108,6 +115,14 @@ export class ChatService {
     this.db
       .prepare('UPDATE conversations SET name = ?, updated_at = ? WHERE id = ?')
       .run(name, now, id)
+    return this.get(id)?.conversation!
+  }
+
+  setLlmPreset(id: string, llmPresetId: string | null): Conversation {
+    const now = new Date().toISOString()
+    this.db
+      .prepare('UPDATE conversations SET llm_preset_id = ?, updated_at = ? WHERE id = ?')
+      .run(llmPresetId, now, id)
     return this.get(id)?.conversation!
   }
 
@@ -136,6 +151,7 @@ export class ChatService {
       kbIds: string[]
       rerankEnabled: boolean
       topK: number
+      llmPresetId?: string
     },
     emitter?: StreamEmitter
   ): Promise<{
@@ -143,12 +159,15 @@ export class ChatService {
     assistantMessageId: string
     citations: MessageCitation[]
   }> {
-    const { conversationId, message, kbIds, topK } = params
+    const { conversationId, message, kbIds, topK, llmPresetId } = params
     const existing = this.get(conversationId)
     if (!existing) throw new Error('对话不存在')
 
     const userMessage = this.appendMessage(conversationId, 'user', message)
     this.updateKbIds(conversationId, kbIds)
+    if (llmPresetId !== undefined) {
+      this.setLlmPreset(conversationId, llmPresetId || null)
+    }
 
     if (existing.conversation.messageCount === 0) {
       const generated = this.generateConversationName(message)
@@ -193,12 +212,20 @@ export class ChatService {
       )
       .run(now, conversationId)
 
-    this.streamLLMResponse(assistantId, conversationId, message, contexts, emitter).catch(
-      (e) => {
-        console.error('[chat:sendMessage] LLM stream failed:', e)
-        emitter?.onError(assistantId, e.message || 'LLM 响应失败')
-      }
-    )
+    const effectivePresetId =
+      llmPresetId !== undefined ? llmPresetId : existing.conversation.llmPresetId
+
+    this.streamLLMResponse(
+      assistantId,
+      conversationId,
+      message,
+      contexts,
+      effectivePresetId,
+      emitter
+    ).catch((e) => {
+      console.error('[chat:sendMessage] LLM stream failed:', e)
+      emitter?.onError(assistantId, e.message || 'LLM 响应失败')
+    })
 
     return { userMessage, assistantMessageId: assistantId, citations }
   }
@@ -208,10 +235,25 @@ export class ChatService {
     conversationId: string,
     userMessage: string,
     contexts: SearchResult[],
+    llmPresetId: string | null | undefined,
     emitter?: StreamEmitter
   ): Promise<void> {
     const settings = this.settingsService.get()
-    if (!settings.llmApiUrl || !settings.llmApiKey) {
+
+    let apiUrl = settings.llmApiUrl
+    let apiKey = settings.llmApiKey
+    let model = settings.llmModel
+
+    if (llmPresetId) {
+      const preset = settings.llmPresets.find((p) => p.id === llmPresetId)
+      if (preset) {
+        apiUrl = preset.apiUrl
+        apiKey = preset.apiKey
+        model = preset.model
+      }
+    }
+
+    if (!apiUrl || !apiKey) {
       throw new Error('未配置 LLM API，请在设置中填写')
     }
 
@@ -225,14 +267,14 @@ export class ChatService {
       { role: 'user', content: userMessage }
     ]
 
-    const response = await net.fetch(settings.llmApiUrl, {
+    const response = await net.fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${settings.llmApiKey}`
+        Authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: settings.llmModel || 'gpt-4o-mini',
+        model: model || 'gpt-4o-mini',
         messages,
         temperature: 0.7,
         stream: true
@@ -367,7 +409,8 @@ ${refs}`
       kbIds,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      messageCount: row.message_count
+      messageCount: row.message_count,
+      llmPresetId: row.llm_preset_id ?? undefined
     }
   }
 

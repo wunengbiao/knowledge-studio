@@ -12,11 +12,12 @@ interface ChatState {
   initialized: boolean
 
   loadConversations: () => Promise<void>
-  createConversation: (kbIds?: string[]) => Promise<string>
+  createConversation: (kbIds?: string[], llmPresetId?: string) => Promise<string>
   deleteConversation: (id: string) => Promise<void>
   renameConversation: (id: string, name: string) => Promise<void>
+  setConversationLlmPreset: (id: string, llmPresetId: string | null) => Promise<void>
   selectConversation: (id: string) => Promise<void>
-  sendMessage: (message: string, kbIds: string[]) => Promise<void>
+  sendMessage: (message: string, kbIds: string[], llmPresetId?: string) => Promise<void>
   subscribeProgress: () => () => void
   clearError: () => void
 }
@@ -40,8 +41,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  async createConversation(kbIds) {
-    const conversation = await window.electronAPI.invoke('conversation:create', { kbIds })
+  async createConversation(kbIds, llmPresetId) {
+    const conversation = await window.electronAPI.invoke('conversation:create', { kbIds, llmPresetId })
     const { conversations } = get()
     set({
       conversations: [conversation, ...conversations],
@@ -69,6 +70,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
+  async setConversationLlmPreset(id, llmPresetId) {
+    const updated = await window.electronAPI.invoke('conversation:set-llm-preset', {
+      id,
+      llmPresetId
+    })
+    set({
+      conversations: get().conversations.map((c) => (c.id === id ? updated : c))
+    })
+  },
+
   async selectConversation(id) {
     const data = await window.electronAPI.invoke('conversation:get', { id })
     if (!data) {
@@ -82,7 +93,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  async sendMessage(message, kbIds) {
+  async sendMessage(message, kbIds, llmPresetId) {
     const { currentConversationId } = get()
     if (!currentConversationId) {
       throw new Error('未选择对话')
@@ -94,7 +105,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         message,
         kbIds,
         rerankEnabled: false,
-        topK: 10
+        topK: 10,
+        llmPresetId
       })
 
       const { conversations } = get()

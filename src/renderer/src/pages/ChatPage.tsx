@@ -1,20 +1,8 @@
-import {
-  AlertCircle,
-  Bot,
-  FileText,
-  Loader2,
-  MessageSquare,
-  Send,
-  User,
-  X
-} from 'lucide-react'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import { useNavigate, useParams } from 'react-router-dom'
-import rehypeHighlight from 'rehype-highlight'
-import remarkGfm from 'remark-gfm'
-import 'highlight.js/styles/github.css'
 import type { Message, MessageCitation } from '@shared/types'
+import { AlertCircle, Bot, FileText, Loader2, Send, User, X } from 'lucide-react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { CitationTooltip, MessageMarkdown } from '../components/chat/markdown'
 import { useChatStore } from '../stores/chat-store'
 import { useKBStore } from '../stores/kb-store'
 
@@ -170,17 +158,6 @@ export function ChatPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-40px)]">
-      {/* Header */}
-      <div className="px-6 py-3 border-b border-gray-200 bg-white no-drag flex items-center gap-2">
-        <MessageSquare className="w-4 h-4 text-gray-400" />
-        <span className="text-sm font-medium text-gray-900 truncate">
-          {currentConversation?.name || '新对话'}
-        </span>
-        {selectedKbs.length > 0 && (
-          <span className="text-xs text-gray-400 ml-auto">基于 {selectedKbs.length} 个知识库</span>
-        )}
-      </div>
-
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 no-drag">
         <div className="space-y-6">
@@ -196,17 +173,18 @@ export function ChatPage() {
             <MessageBubble key={msg.id} msg={msg} onCitationClick={setActiveCitation} />
           ))}
 
-          {sending && conversationMessages[conversationMessages.length - 1]?.role !== 'assistant' && (
-            <div className="flex gap-3 ml-6">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shrink-0">
-                <Bot className="w-4 h-4 text-white" />
+          {sending &&
+            conversationMessages[conversationMessages.length - 1]?.role !== 'assistant' && (
+              <div className="flex gap-3 ml-6">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shrink-0">
+                  <Bot className="w-4 h-4 text-white" />
+                </div>
+                <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-2 text-sm text-gray-500">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  正在思考中...
+                </div>
               </div>
-              <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-2 text-sm text-gray-500">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                正在思考中...
-              </div>
-            </div>
-          )}
+            )}
 
           {error && (
             <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
@@ -307,10 +285,7 @@ export function ChatPage() {
       {/* Citation Popover */}
       {activeCitation && (
         <>
-          <div
-            className="fixed inset-0 z-40 bg-black/20"
-            onClick={() => setActiveCitation(null)}
-          />
+          <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setActiveCitation(null)} />
           <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(640px,90vw)] max-h-[70vh] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col">
             <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100">
               <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 font-semibold text-sm">
@@ -353,30 +328,31 @@ const MessageBubble = memo(function MessageBubble({ msg, onCitationClick }: Mess
   const citations = msg.citations ?? []
   const citationMap = useMemo(() => new Map(citations.map((c) => [c.index, c])), [citations])
   const isStreamingThis = msg.role === 'assistant' && msg.content === ''
+  const userAvatar = useKBStore((s) => s.settings?.userAvatar) ?? ''
 
-  const markdownComponents = useMemo(
-    () => ({
-      p: ({ children }: { children?: React.ReactNode }) => (
-        <p>{renderCitationsInChildren(children, citationMap, msg.id, onCitationClick)}</p>
-      ),
-      li: ({ children }: { children?: React.ReactNode }) => (
-        <li>{renderCitationsInChildren(children, citationMap, msg.id, onCitationClick)}</li>
-      )
-    }),
+  const transformChildren = useCallback(
+    (children: React.ReactNode) =>
+      renderCitationsInChildren(children, citationMap, msg.id, onCitationClick),
     [citationMap, msg.id, onCitationClick]
   )
 
   return (
     <div className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse mr-6' : 'ml-6'}`}>
       <div
-        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 overflow-hidden ${
           msg.role === 'user'
-            ? 'bg-gradient-to-br from-blue-500 to-blue-600'
+            ? userAvatar
+              ? 'bg-gray-100'
+              : 'bg-gradient-to-br from-blue-500 to-blue-600'
             : 'bg-gradient-to-br from-purple-500 to-purple-600'
         }`}
       >
         {msg.role === 'user' ? (
-          <User className="w-4 h-4 text-white" />
+          userAvatar ? (
+            <img src={userAvatar} alt="你" className="w-full h-full object-cover" />
+          ) : (
+            <User className="w-4 h-4 text-white" />
+          )
         ) : (
           <Bot className="w-4 h-4 text-white" />
         )}
@@ -392,22 +368,14 @@ const MessageBubble = memo(function MessageBubble({ msg, onCitationClick }: Mess
           <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
         ) : (
           <>
-            <div className="prose prose-sm max-w-none prose-headings:mt-3 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-pre:my-2 prose-pre:bg-gray-50 prose-pre:border prose-pre:border-gray-200 prose-code:text-pink-600 prose-code:bg-pink-50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none">
-              {isStreamingThis ? (
-                <div className="flex items-center gap-2 text-sm text-gray-500 py-1">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  正在检索并思考...
-                </div>
-              ) : (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeHighlight]}
-                  components={markdownComponents}
-                >
-                  {msg.content}
-                </ReactMarkdown>
-              )}
-            </div>
+            {isStreamingThis ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500 py-1">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                正在检索并思考...
+              </div>
+            ) : (
+              <MessageMarkdown content={msg.content} transformChildren={transformChildren} />
+            )}
 
             {!isStreamingThis && citations.length > 0 && (
               <div className="mt-3 pt-3 border-t border-gray-100">
@@ -417,16 +385,18 @@ const MessageBubble = memo(function MessageBubble({ msg, onCitationClick }: Mess
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {citations.map((c) => (
-                    <button
-                      key={c.index}
-                      type="button"
-                      onClick={() => onCitationClick({ messageId: msg.id, citation: c })}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] transition-colors"
-                      title={c.docTitle}
-                    >
-                      <span className="font-semibold">[{c.index}]</span>
-                      <span className="max-w-[200px] truncate">{c.docTitle}</span>
-                    </button>
+                    <CitationTooltip key={c.index} citation={c}>
+                      <button
+                        type="button"
+                        onClick={() => onCitationClick({ messageId: msg.id, citation: c })}
+                        className="group/cite inline-flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] transition-colors"
+                      >
+                        <span className="inline-flex items-center justify-center w-[18px] h-[18px] rounded-full bg-blue-500 group-hover/cite:bg-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors">
+                          {c.index}
+                        </span>
+                        <span className="max-w-[200px] truncate">{c.docTitle}</span>
+                      </button>
+                    </CitationTooltip>
                   ))}
                 </div>
               </div>
@@ -457,19 +427,21 @@ function renderCitationsInChildren(
         if (match.index > lastIndex) {
           result.push(node.slice(lastIndex, match.index))
         }
-        const idx = parseInt(match[1], 10)
+        const idx = Number.parseInt(match[1], 10)
         const citation = citationMap.get(idx)
         if (citation) {
           const k = `cite-${messageId}-${keyCounter++}`
           result.push(
-            <button
-              key={k}
-              type="button"
-              onClick={() => setActiveCitation({ messageId, citation })}
-              className="inline-flex items-center justify-center px-1 mx-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-[11px] transition-colors align-baseline"
-            >
-              [{idx}]
-            </button>
+            <CitationTooltip key={k} citation={citation}>
+              <button
+                type="button"
+                onClick={() => setActiveCitation({ messageId, citation })}
+                aria-label={`引用 ${idx}: ${citation.docTitle}`}
+                className="inline-flex items-center justify-center align-super mx-0.5 min-w-[16px] h-[16px] px-[5px] rounded-full bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors"
+              >
+                {idx}
+              </button>
+            </CitationTooltip>
           )
         } else {
           result.push(match[0])

@@ -148,6 +148,19 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('settings:test-llm', async (_e, settings) => {
+    try {
+      await searchService.testLlm({
+        apiUrl: settings.llmApiUrl,
+        apiKey: settings.llmApiKey,
+        model: settings.llmModel
+      })
+      return { success: true, message: 'LLM API 连接成功' }
+    } catch (e: any) {
+      return { success: false, message: e.message || '连接失败' }
+    }
+  })
+
   ipcMain.handle('settings:test-mistral', async (_e, settings) => {
     try {
       await pdfOcrService.test({
@@ -193,6 +206,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('conversation:delete', async (_e, { id }) => chatService.delete(id))
 
   ipcMain.handle('conversation:rename', async (_e, { id, name }) => chatService.rename(id, name))
+
+  ipcMain.handle('conversation:set-llm-preset', async (_e, { id, llmPresetId }) =>
+    chatService.setLlmPreset(id, llmPresetId)
+  )
 
   ipcMain.handle('conversation:get', async (_e, { id }) => chatService.get(id))
 

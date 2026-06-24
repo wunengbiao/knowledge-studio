@@ -79,6 +79,7 @@ export interface Conversation {
   createdAt: string
   updatedAt: string
   messageCount: number
+  llmPresetId?: string
 }
 
 export interface MessageCitation {
@@ -115,6 +116,14 @@ export interface RerankPreset {
   model: string
 }
 
+export interface LlmPreset {
+  id: string
+  name: string
+  apiUrl: string
+  apiKey: string
+  model: string
+}
+
 export interface AppSettings {
   embeddingApiUrl: string
   embeddingApiKey: string
@@ -132,7 +141,9 @@ export interface AppSettings {
   dataDir: string
   embeddingPresets: EmbeddingPreset[]
   rerankPresets: RerankPreset[]
+  llmPresets: LlmPreset[]
   mistralApiKey: string
   mistralApiUrl: string
   mistralOcrModel: string
+  userAvatar: string
 }

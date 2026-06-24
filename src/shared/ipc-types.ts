@@ -64,6 +64,7 @@ export interface IpcChannels {
   'settings:update': { request: Partial<AppSettings>; response: AppSettings }
   'settings:test-embedding': { request: AppSettings; response: { success: boolean; message: string } }
   'settings:test-rerank': { request: AppSettings; response: { success: boolean; message: string } }
+  'settings:test-llm': { request: AppSettings; response: { success: boolean; message: string } }
 
   // Embedding management (KB-level)
   'kb:test-embedding': {
@@ -84,12 +85,13 @@ export interface IpcChannels {
 
   // Chat Conversations
   'conversation:list': { request: void; response: Conversation[] }
-  'conversation:create': { request: { kbIds?: string[] }; response: Conversation }
+  'conversation:create': { request: { kbIds?: string[]; llmPresetId?: string }; response: Conversation }
   'conversation:delete': { request: { id: string }; response: boolean }
   'conversation:rename': { request: { id: string; name: string }; response: Conversation }
+  'conversation:set-llm-preset': { request: { id: string; llmPresetId: string | null }; response: Conversation }
   'conversation:get': { request: { id: string }; response: { conversation: Conversation; messages: Message[] } | null }
   'conversation:send': {
-    request: { conversationId: string; message: string; kbIds: string[]; rerankEnabled: boolean; topK: number }
+    request: { conversationId: string; message: string; kbIds: string[]; rerankEnabled: boolean; topK: number; llmPresetId?: string }
     response: { userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }
   }
   'conversation:messages': { request: { conversationId: string }; response: Message[] }
