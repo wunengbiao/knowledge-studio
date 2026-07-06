@@ -3,3 +3,5 @@ build
 node_modules
 out
 .DS_Store
+.omo
+.wolf

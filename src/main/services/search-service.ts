@@ -1,7 +1,7 @@
 import { app, net } from 'electron'
 import { join } from 'path'
 import Database from 'better-sqlite3'
-import type { SearchResult, AppSettings, KnowledgeBase } from '@shared/types'
+import type { SearchResult, AppSettings, KnowledgeBase, ProviderKind } from '@shared/types'
 import { embeddingService } from './embedding-service'
 import { tokenize } from './tokenizer'
 import { VectorStore } from './vector-store'
@@ -409,5 +409,57 @@ export class SearchService {
       const text = await response.text().catch(() => '')
       throw new Error(`LLM API 返回错误: HTTP ${response.status} ${text.slice(0, 200)}`)
     }
+  }
+
+  async listProviderModels(config: {
+    apiHost: string
+    apiKey: string
+    kind: ProviderKind
+  }): Promise<{ id: string; name?: string; ownedBy?: string }[]> {
+    const apiHost = (config.apiHost || '').replace(/\/+$/, '')
+    if (!apiHost) throw new Error('未配置 API Host')
+    if (!config.apiKey) throw new Error('未配置 API Key')
+
+    if (config.kind === 'gemini') {
+      const url = `${apiHost}/models`
+      const response = await net.fetch(url, {
+        method: 'GET',
+        headers: { 'x-goog-api-key': config.apiKey },
+        signal: AbortSignal.timeout(15000)
+      })
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        throw new Error(`HTTP ${response.status} ${text.slice(0, 200)}`)
+      }
+      const data = (await response.json()) as {
+        models?: { name?: string; displayName?: string; description?: string }[]
+      }
+      const list = data.models ?? []
+      return list
+        .map((m) => {
+          const raw = m.name ?? ''
+          const id = raw.startsWith('models/') ? raw.slice('models/'.length) : raw
+          return { id, name: m.displayName || id }
+        })
+        .filter((m) => m.id)
+    }
+
+    const url = `${apiHost}/models`
+    const response = await net.fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+      signal: AbortSignal.timeout(15000)
+    })
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new Error(`HTTP ${response.status} ${text.slice(0, 200)}`)
+    }
+    const data = (await response.json()) as {
+      data?: { id: string; owned_by?: string }[]
+    }
+    const list = data.data ?? []
+    return list
+      .map((m) => ({ id: m.id, ownedBy: m.owned_by }))
+      .filter((m) => m.id)
   }
 }

@@ -1,35 +1,51 @@
-import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { useEffect, useState } from 'react'
 import { Loader2, MessageSquare, PanelLeftOpen } from 'lucide-react'
-import { Sidebar } from './Sidebar'
-import { useKBStore } from '../../stores/kb-store'
-import { useDocStore } from '../../stores/doc-store'
+import { useEffect, useState } from 'react'
+import { Outlet, useLocation } from 'react-router-dom'
+import { useAssistantStore } from '../../stores/assistant-store'
 import { useChatStore } from '../../stores/chat-store'
+import { useDocStore } from '../../stores/doc-store'
+import { useKBStore } from '../../stores/kb-store'
+import { AssistantSelector } from '../assistant/AssistantSettingsPanel'
+import { Sidebar } from './Sidebar'
 
 export function AppLayout() {
-  const navigate = useNavigate()
   const location = useLocation()
   const { loadKnowledgeBases, loadSettings } = useKBStore()
+  const { assistants, loadAssistants } = useAssistantStore()
   const { backfillProgress, subscribeProgress } = useDocStore()
   const conversations = useChatStore((s) => s.conversations)
   const currentConversationId = useChatStore((s) => s.currentConversationId)
+  const setConversationAssistant = useChatStore((s) => s.setConversationAssistant)
   const [sidebarHidden, setSidebarHidden] = useState(false)
 
   useEffect(() => {
     loadKnowledgeBases()
     loadSettings()
+    loadAssistants()
     const cleanup = subscribeProgress()
     return cleanup
-  }, [])
+  }, [loadAssistants, loadKnowledgeBases, loadSettings, subscribeProgress])
 
   const isHome = location.pathname === '/'
   const isChatPage = location.pathname.startsWith('/chat')
+  const shouldShowSidebar = isHome || isChatPage
   const currentConversation = conversations.find((c) => c.id === currentConversationId)
+  const currentAssistant =
+    assistants.find((assistant) => assistant.id === currentConversation?.assistantId) ??
+    assistants[0] ??
+    null
+
+  const handleSelectAssistant = async (assistantId: string) => {
+    if (!currentConversationId || !assistantId) return
+    await setConversationAssistant(currentConversationId, assistantId)
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar hidden={sidebarHidden} onHide={() => setSidebarHidden(true)} />
-      <main className="flex-1 overflow-y-auto bg-[#fafafa]">
+      {shouldShowSidebar && (
+        <Sidebar hidden={sidebarHidden} onHide={() => setSidebarHidden(true)} />
+      )}
+      <main className="flex-1 min-h-0 overflow-hidden bg-[#fafafa]">
         <div className="drag-region h-10 w-full fixed top-0 left-0 right-0 z-10 flex items-center">
           {isChatPage && (
             <div
@@ -39,14 +55,29 @@ export function AppLayout() {
             >
               <div className="no-drag flex items-center gap-2 min-w-0">
                 <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                <span className="text-sm font-medium text-gray-900 truncate max-w-[60vw]">
+                <span className="text-sm font-medium text-gray-900 truncate max-w-[42vw]">
                   {currentConversation?.name || '新对话'}
                 </span>
               </div>
             </div>
           )}
+          {isChatPage && (
+            <div
+              className={`pointer-events-none absolute top-0 right-0 h-full flex items-center justify-center transition-all duration-200 ${
+                sidebarHidden ? 'left-0' : 'left-60'
+              }`}
+            >
+              <div className="no-drag pointer-events-auto">
+                <AssistantSelector
+                  assistants={assistants}
+                  currentAssistant={currentAssistant}
+                  onSelect={handleSelectAssistant}
+                />
+              </div>
+            </div>
+          )}
         </div>
-        {sidebarHidden && (
+        {shouldShowSidebar && sidebarHidden && (
           <button
             type="button"
             onClick={() => setSidebarHidden(false)}
@@ -59,7 +90,7 @@ export function AppLayout() {
         {backfillProgress && backfillProgress.total > 0 && (
           <div
             className={`fixed top-10 right-0 z-20 bg-blue-50 border-b border-blue-200 px-4 py-2 flex items-center gap-3 transition-all duration-200 ${
-              sidebarHidden ? 'left-0' : 'left-60'
+              shouldShowSidebar && !sidebarHidden ? 'left-60' : 'left-0'
             }`}
           >
             <Loader2 className="w-4 h-4 text-blue-500 animate-spin shrink-0" />
@@ -77,7 +108,7 @@ export function AppLayout() {
             </span>
           </div>
         )}
-        <div className="pt-10">
+        <div className="h-full min-h-0 pt-10">
           <Outlet />
         </div>
       </main>

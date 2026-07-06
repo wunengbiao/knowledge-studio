@@ -1,17 +1,18 @@
-import { useNavigate } from 'react-router-dom'
-import { useKBStore } from '../stores/kb-store'
+import type { KnowledgeBase } from '@shared/types'
 import {
-  Library,
-  Plus,
   ArrowRight,
   BookOpen,
   BrainCircuit,
+  FolderOpen,
   Globe,
+  Library,
+  Plus,
   Scale,
-  Stethoscope,
-  FolderOpen
+  Stethoscope
 } from 'lucide-react'
-import type { KnowledgeBase } from '@shared/types'
+import { useNavigate } from 'react-router-dom'
+import { CreateKBModal } from '../components/CreateKBModal'
+import { useKBStore } from '../stores/kb-store'
 
 const categoryConfig: Record<
   KnowledgeBase['category'],
@@ -65,8 +66,8 @@ export function HomePage() {
       <div className="mb-12">
         <h1 className="text-3xl font-bold text-gray-900 mb-3">RAG 知识库</h1>
         <p className="text-gray-500 text-base leading-relaxed max-w-xl">
-          本地优先的知识管理工具，支持 BM25 + 向量嵌入 + 重排序混合检索，
-          结合 GraphRAG 技术实现知识图谱增强搜索。
+          本地优先的知识管理工具，支持 BM25 + 向量嵌入 + 重排序混合检索， 结合 GraphRAG
+          技术实现知识图谱增强搜索。
         </p>
       </div>
 
@@ -156,9 +157,7 @@ export function HomePage() {
                     )}
                     <div className="flex items-center gap-3 text-xs text-gray-400">
                       <span>{kb.documentCount} 文档</span>
-                      <span>
-                        {new Date(kb.updatedAt).toLocaleDateString('zh-CN')}
-                      </span>
+                      <span>{new Date(kb.updatedAt).toLocaleDateString('zh-CN')}</span>
                     </div>
                   </div>
                   <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all mt-2" />
@@ -168,6 +167,8 @@ export function HomePage() {
           </div>
         )}
       </div>
+
+      <CreateKBModal />
     </div>
   )
 }

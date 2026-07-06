@@ -1,19 +1,21 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron'
-import { KnowledgeBaseService } from './services/knowledge-base-service'
-import { DocumentService } from './services/document-service'
-import { SearchService } from './services/search-service'
-import { GraphService } from './services/graph-service'
-import { SettingsService } from './services/settings-service'
+import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { AssistantService } from './services/assistant-service'
 import { ChatService } from './services/chat-service'
-import { VectorStore } from './services/vector-store'
+import { DocumentService } from './services/document-service'
 import { embeddingService } from './services/embedding-service'
+import { GraphService } from './services/graph-service'
+import { KnowledgeBaseService } from './services/knowledge-base-service'
 import { pdfOcrService } from './services/pdf-ocr-service'
+import { SearchService } from './services/search-service'
+import { SettingsService } from './services/settings-service'
+import { VectorStore } from './services/vector-store'
 
 const kbService = new KnowledgeBaseService()
 const docService = new DocumentService()
 const searchService = new SearchService()
 const graphService = new GraphService()
 const settingsService = new SettingsService()
+const assistantService = new AssistantService()
 const chatService = new ChatService()
 
 export { docService }
@@ -174,6 +176,15 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  ipcMain.handle('provider:list-models', async (_e, config) => {
+    try {
+      const models = await searchService.listProviderModels(config)
+      return { success: true, models }
+    } catch (e: any) {
+      return { success: false, message: e.message || '获取失败', models: [] }
+    }
+  })
+
   // ─── Embedding Management ─────────────────────────────
   ipcMain.handle('kb:test-embedding', async (_e, config) => {
     try {
@@ -198,6 +209,19 @@ export function registerIpcHandlers(): void {
     return true
   })
 
+  // ─── Assistants ────────────────────────────────────────
+  ipcMain.handle('assistant:list', async () => assistantService.list())
+
+  ipcMain.handle('assistant:get', async (_e, { id }) => assistantService.get(id))
+
+  ipcMain.handle('assistant:create', async (_e, params) => assistantService.create(params))
+
+  ipcMain.handle('assistant:update', async (_e, { id, updates }) =>
+    assistantService.update(id, updates)
+  )
+
+  ipcMain.handle('assistant:delete', async (_e, { id }) => assistantService.delete(id))
+
   // ─── Chat Conversations ───────────────────────────────
   ipcMain.handle('conversation:list', async () => chatService.list())
 
@@ -211,6 +235,10 @@ export function registerIpcHandlers(): void {
     chatService.setLlmPreset(id, llmPresetId)
   )
 
+  ipcMain.handle('conversation:set-assistant', async (_e, { id, assistantId }) =>
+    chatService.setAssistant(id, assistantId)
+  )
+
   ipcMain.handle('conversation:get', async (_e, { id }) => chatService.get(id))
 
   ipcMain.handle('conversation:send', async (_e, params) => {
@@ -220,8 +248,16 @@ export function registerIpcHandlers(): void {
         onDelta: (assistantMessageId, delta) => {
           win?.webContents.send('chat:stream-delta', { assistantMessageId, delta })
         },
-        onDone: (assistantMessageId, content, createdAt) => {
-          win?.webContents.send('chat:stream-done', { assistantMessageId, content, createdAt })
+        onReasoning: (assistantMessageId, delta) => {
+          win?.webContents.send('chat:stream-reasoning', { assistantMessageId, delta })
+        },
+        onDone: (assistantMessageId, content, reasoning, createdAt) => {
+          win?.webContents.send('chat:stream-done', {
+            assistantMessageId,
+            content,
+            reasoning,
+            createdAt
+          })
         },
         onError: (assistantMessageId, error) => {
           win?.webContents.send('chat:error', { error, assistantMessageId })

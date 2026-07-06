@@ -1,19 +1,20 @@
 import type {
-  KnowledgeBase,
+  AppSettings,
+  Assistant,
+  CommunityReport,
+  Conversation,
   Document,
-  SearchResult,
   GraphEntity,
   GraphRelation,
-  CommunityReport,
-  AppSettings,
-  Conversation,
+  KnowledgeBase,
   Message,
-  MessageCitation
+  MessageCitation,
+  SearchResult
 } from './types'
 
 export interface IpcChannels {
   // Knowledge Base
-  'kb:list': { request: void; response: KnowledgeBase[] }
+  'kb:list': { request: undefined; response: KnowledgeBase[] }
   'kb:create': {
     request: {
       name: string
@@ -53,18 +54,35 @@ export interface IpcChannels {
   }
 
   // GraphRAG
-  'graph:build': { request: { kbId: string }; response: { entityCount: number; relationCount: number } }
+  'graph:build': {
+    request: { kbId: string }
+    response: { entityCount: number; relationCount: number }
+  }
   'graph:entities': { request: { kbId: string }; response: GraphEntity[] }
   'graph:relations': { request: { kbId: string }; response: GraphRelation[] }
   'graph:communities': { request: { kbId: string }; response: CommunityReport[] }
-  'graph:status': { request: { kbId: string }; response: { built: boolean; entityCount: number; relationCount: number } }
+  'graph:status': {
+    request: { kbId: string }
+    response: { built: boolean; entityCount: number; relationCount: number }
+  }
 
   // Settings
-  'settings:get': { request: void; response: AppSettings }
+  'settings:get': { request: undefined; response: AppSettings }
   'settings:update': { request: Partial<AppSettings>; response: AppSettings }
-  'settings:test-embedding': { request: AppSettings; response: { success: boolean; message: string } }
+  'settings:test-embedding': {
+    request: AppSettings
+    response: { success: boolean; message: string }
+  }
   'settings:test-rerank': { request: AppSettings; response: { success: boolean; message: string } }
   'settings:test-llm': { request: AppSettings; response: { success: boolean; message: string } }
+  'provider:list-models': {
+    request: { apiHost: string; apiKey: string; kind: import('./types').ProviderKind }
+    response: {
+      success: boolean
+      message?: string
+      models: { id: string; name?: string; ownedBy?: string }[]
+    }
+  }
 
   // Embedding management (KB-level)
   'kb:test-embedding': {
@@ -73,7 +91,13 @@ export interface IpcChannels {
   }
   'embedding:status': {
     request: { kbId: string }
-    response: { docId: string; status: import('./types').EmbeddingStatus; done: number; total: number; error?: string }[]
+    response: {
+      docId: string
+      status: import('./types').EmbeddingStatus
+      done: number
+      total: number
+      error?: string
+    }[]
   }
   'embedding:retry': { request: { docId: string }; response: boolean }
 
@@ -83,25 +107,92 @@ export interface IpcChannels {
     response: string | null
   }
 
+  // Assistants
+  'assistant:list': { request: undefined; response: Assistant[] }
+  'assistant:get': { request: { id: string }; response: Assistant | null }
+  'assistant:create': {
+    request: {
+      name?: string
+      description?: string
+      prompt?: string
+      providerId?: string | null
+      modelId?: string | null
+      modelParams?: Partial<Assistant['modelParams']>
+      knowledgeBaseIds?: string[]
+    }
+    response: Assistant
+  }
+  'assistant:update': {
+    request: {
+      id: string
+      updates: Partial<Omit<Assistant, 'id' | 'createdAt' | 'updatedAt'>>
+    }
+    response: Assistant
+  }
+  'assistant:delete': { request: { id: string }; response: boolean }
+
   // Chat Conversations
-  'conversation:list': { request: void; response: Conversation[] }
-  'conversation:create': { request: { kbIds?: string[]; llmPresetId?: string }; response: Conversation }
+  'conversation:list': { request: undefined; response: Conversation[] }
+  'conversation:create': {
+    request: { kbIds?: string[]; llmPresetId?: string; assistantId?: string }
+    response: Conversation
+  }
   'conversation:delete': { request: { id: string }; response: boolean }
   'conversation:rename': { request: { id: string; name: string }; response: Conversation }
-  'conversation:set-llm-preset': { request: { id: string; llmPresetId: string | null }; response: Conversation }
-  'conversation:get': { request: { id: string }; response: { conversation: Conversation; messages: Message[] } | null }
+  'conversation:set-llm-preset': {
+    request: { id: string; llmPresetId: string | null }
+    response: Conversation
+  }
+  'conversation:set-assistant': {
+    request: { id: string; assistantId: string | null }
+    response: Conversation
+  }
+  'conversation:get': {
+    request: { id: string }
+    response: { conversation: Conversation; messages: Message[] } | null
+  }
   'conversation:send': {
-    request: { conversationId: string; message: string; kbIds: string[]; rerankEnabled: boolean; topK: number; llmPresetId?: string }
+    request: {
+      conversationId: string
+      message: string
+      kbIds: string[]
+      rerankEnabled: boolean
+      topK: number
+      llmPresetId?: string
+      assistantId?: string
+    }
     response: { userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }
   }
   'conversation:messages': { request: { conversationId: string }; response: Message[] }
 
   // Progress events (main → renderer)
-  'progress:indexing': { request: void; response: { kbId: string; current: number; total: number; status: string } }
-  'progress:embedding': { request: void; response: { kbId: string; current: number; total: number; status: string } }
-  'progress:doc-embedding': { request: void; response: { docId: string; current: number; total: number; status: string } }
-  'progress:backfill': { request: void; response: { current: number; total: number; status: string } }
-  'chat:error': { request: void; response: { error: string; assistantMessageId?: string } }
-  'chat:stream-delta': { request: void; response: { assistantMessageId: string; delta: string } }
-  'chat:stream-done': { request: void; response: { assistantMessageId: string; content: string; createdAt: string } }
+  'progress:indexing': {
+    request: undefined
+    response: { kbId: string; current: number; total: number; status: string }
+  }
+  'progress:embedding': {
+    request: undefined
+    response: { kbId: string; current: number; total: number; status: string }
+  }
+  'progress:doc-embedding': {
+    request: undefined
+    response: { docId: string; current: number; total: number; status: string }
+  }
+  'progress:backfill': {
+    request: undefined
+    response: { current: number; total: number; status: string }
+  }
+  'chat:error': { request: undefined; response: { error: string; assistantMessageId?: string } }
+  'chat:stream-delta': {
+    request: undefined
+    response: { assistantMessageId: string; delta: string }
+  }
+  'chat:stream-reasoning': {
+    request: undefined
+    response: { assistantMessageId: string; delta: string }
+  }
+  'chat:stream-done': {
+    request: undefined
+    response: { assistantMessageId: string; content: string; reasoning: string; createdAt: string }
+  }
 }

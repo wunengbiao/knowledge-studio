@@ -46,7 +46,7 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
 
   useEffect(() => {
     loadConversations()
-  }, [])
+  }, [loadConversations])
 
   const handleNewConversation = async () => {
     const id = await createConversation()
@@ -54,6 +54,7 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
   }
 
   const handleDeleteConversation = async (e: React.MouseEvent, id: string) => {
+    e.preventDefault()
     e.stopPropagation()
     await deleteConversation(id)
     if (location.pathname === `/chat/${id}`) {
@@ -62,6 +63,7 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
   }
 
   const handleDeleteKB = async (e: React.MouseEvent, id: string) => {
+    e.preventDefault()
     e.stopPropagation()
     await deleteKB(id)
     if (location.pathname.includes(id)) {
@@ -97,9 +99,10 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
       {/* KB Management Button */}
       <div className="px-3 pt-3 no-drag">
         <button
-          onClick={() => navigate('/kb-management')}
+          type="button"
+          onClick={() => navigate('/')}
           className={`w-full flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all ${
-            location.pathname === '/kb-management'
+            location.pathname === '/'
               ? 'bg-blue-50 text-blue-700'
               : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
           }`}
@@ -114,6 +117,7 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">对话</span>
           <button
+            type="button"
             onClick={handleNewConversation}
             title="新建对话"
             className="p-1 rounded-md text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
@@ -130,6 +134,7 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
           return (
             <div key={conv.id} className="group relative">
               <button
+                type="button"
                 onClick={() => navigate(`/chat/${conv.id}`)}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all mb-0.5 ${
                   isActive
@@ -144,6 +149,7 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
                 </div>
               </button>
               <button
+                type="button"
                 onClick={(e) => handleDeleteConversation(e, conv.id)}
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 text-gray-400 hover:text-red-500 transition-all"
               >
@@ -171,6 +177,7 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
           return (
             <div key={kb.id} className="group relative">
               <button
+                type="button"
                 onClick={() => navigate(`/kb/${kb.id}`)}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all mb-0.5 ${
                   isActive
@@ -187,6 +194,7 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
                 </div>
               </button>
               <button
+                type="button"
                 onClick={(e) => handleDeleteKB(e, kb.id)}
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 text-gray-400 hover:text-red-500 transition-all"
               >
@@ -207,6 +215,7 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
       {/* Bottom */}
       <div className="border-t border-gray-100 p-2 no-drag">
         <button
+          type="button"
           onClick={() => navigate('/settings')}
           className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
             location.pathname === '/settings'

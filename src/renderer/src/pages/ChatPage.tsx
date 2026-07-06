@@ -2,7 +2,9 @@ import type { Message, MessageCitation } from '@shared/types'
 import { AlertCircle, Bot, FileText, Loader2, Send, User, X } from 'lucide-react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { ThinkingBlock } from '../components/chat/ThinkingBlock'
 import { CitationTooltip, MessageMarkdown } from '../components/chat/markdown'
+import { useAssistantStore } from '../stores/assistant-store'
 import { useChatStore } from '../stores/chat-store'
 import { useKBStore } from '../stores/kb-store'
 
@@ -19,8 +21,10 @@ export function ChatPage() {
     sendMessage,
     subscribeProgress,
     clearError,
-    createConversation
+    createConversation,
+    clearCurrentConversation
   } = useChatStore()
+  const { assistants, loadAssistants } = useAssistantStore()
   const { knowledgeBases, loadKnowledgeBases } = useKBStore()
   const [input, setInput] = useState('')
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([])
@@ -35,48 +39,61 @@ export function ChatPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const currentConversation = conversations.find((c) => c.id === currentConversationId)
+  const currentConversationKbIds = currentConversation?.kbIds ?? []
+  const currentAssistant =
+    assistants.find((assistant) => assistant.id === currentConversation?.assistantId) ??
+    assistants[0] ??
+    null
 
   useEffect(() => {
     loadKnowledgeBases()
+    loadAssistants()
     const cleanup = subscribeProgress()
     return cleanup
-  }, [])
+  }, [loadAssistants, loadKnowledgeBases, subscribeProgress])
 
   useEffect(() => {
     if (id) {
       selectConversation(id)
-    } else {
-      ;(async () => {
-        const newId = await createConversation()
-        navigate(`/chat/${newId}`, { replace: true })
-      })()
+      return
     }
-  }, [id])
+    clearCurrentConversation()
+  }, [clearCurrentConversation, id, selectConversation])
 
   useEffect(() => {
-    if (currentConversation && currentConversation.kbIds.length > 0) {
-      setSelectedKbIds(currentConversation.kbIds)
+    if (currentConversationKbIds.length > 0) {
+      setSelectedKbIds(currentConversationKbIds)
+      return
     }
-  }, [currentConversationId])
+    if (currentAssistant) {
+      setSelectedKbIds(currentAssistant.knowledgeBaseIds)
+    }
+  }, [currentAssistant, currentConversationKbIds])
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [conversationMessages, sending])
+  })
 
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
     }
-  }, [input])
+  })
 
   const handleSend = async () => {
     const trimmed = input.trim()
     if (!trimmed || sending) return
     setInput('')
-    await sendMessage(trimmed, selectedKbIds)
+
+    if (!currentConversationId) {
+      const newId = await createConversation(selectedKbIds, undefined, currentAssistant?.id)
+      navigate(`/chat/${newId}`, { replace: true })
+    }
+
+    await sendMessage(trimmed, selectedKbIds, undefined, currentAssistant?.id)
   }
 
   const toggleKb = (kbId: string) => {
@@ -164,8 +181,20 @@ export function ChatPage() {
           {conversationMessages.length === 0 && !sending && (
             <div className="text-center py-16 text-gray-400">
               <Bot className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">开始与你的知识库对话</p>
-              <p className="text-xs mt-1">在下方选择知识库后提问</p>
+              {selectedKbs.length === 0 ? (
+                <>
+                  <p className="text-sm text-gray-500">开始直接对话</p>
+                  <p className="text-xs mt-1">未选择知识库，将直接调用模型回复</p>
+                  <p className="text-xs mt-2 text-blue-500">输入 @ 可选择知识库进行检索</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm">开始与你的知识库对话</p>
+                  <p className="text-xs mt-1">
+                    已选择 {selectedKbs.length} 个知识库，提问将基于检索结果
+                  </p>
+                </>
+              )}
             </div>
           )}
 
@@ -190,7 +219,11 @@ export function ChatPage() {
             <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <div className="flex-1">{error}</div>
-              <button onClick={clearError} className="text-red-400 hover:text-red-600">
+              <button
+                type="button"
+                onClick={clearError}
+                className="text-red-400 hover:text-red-600"
+              >
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -268,6 +301,7 @@ export function ChatPage() {
               />
             </div>
             <button
+              type="button"
               onClick={handleSend}
               disabled={!input.trim() || sending}
               className="w-9 h-9 flex items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0"
@@ -285,7 +319,12 @@ export function ChatPage() {
       {/* Citation Popover */}
       {activeCitation && (
         <>
-          <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setActiveCitation(null)} />
+          <button
+            type="button"
+            aria-label="关闭引用详情"
+            className="fixed inset-0 z-40 bg-black/20"
+            onClick={() => setActiveCitation(null)}
+          />
           <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(640px,90vw)] max-h-[70vh] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col">
             <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100">
               <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 font-semibold text-sm">
@@ -327,7 +366,8 @@ interface MessageBubbleProps {
 const MessageBubble = memo(function MessageBubble({ msg, onCitationClick }: MessageBubbleProps) {
   const citations = msg.citations ?? []
   const citationMap = useMemo(() => new Map(citations.map((c) => [c.index, c])), [citations])
-  const isStreamingThis = msg.role === 'assistant' && msg.content === ''
+  const isStreamingThis = msg.role === 'assistant' && msg.content === '' && !msg.reasoning
+  const isReasoningStreaming = msg.role === 'assistant' && !!msg.reasoning && msg.content === ''
   const userAvatar = useKBStore((s) => s.settings?.userAvatar) ?? ''
 
   const transformChildren = useCallback(
@@ -368,10 +408,13 @@ const MessageBubble = memo(function MessageBubble({ msg, onCitationClick }: Mess
           <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
         ) : (
           <>
+            {(msg.reasoning || isReasoningStreaming) && (
+              <ThinkingBlock reasoning={msg.reasoning} streaming={isReasoningStreaming} />
+            )}
             {isStreamingThis ? (
               <div className="flex items-center gap-2 text-sm text-gray-500 py-1">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                正在检索并思考...
+                {citations.length > 0 ? '正在检索并思考...' : '正在思考...'}
               </div>
             ) : (
               <MessageMarkdown content={msg.content} transformChildren={transformChildren} />

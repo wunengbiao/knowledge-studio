@@ -72,6 +72,49 @@ export interface CommunityReport {
   relations: string[]
 }
 
+export type CustomParamType = 'string' | 'number' | 'boolean' | 'json'
+
+export interface CustomParamEntry {
+  name: string
+  type: CustomParamType
+  value: string | number | boolean | unknown
+}
+
+export interface AssistantModelParams {
+  temperatureEnabled: boolean
+  temperature?: number
+  topPEnabled: boolean
+  topP?: number
+  maxTokensEnabled: boolean
+  maxTokens?: number
+  customParameters: CustomParamEntry[]
+}
+
+export interface Assistant {
+  id: string
+  name: string
+  description: string
+  prompt: string
+  providerId?: string
+  modelId?: string
+  modelParams: AssistantModelParams
+  knowledgeBaseIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export const DEFAULT_ASSISTANT_PROMPT = '你是一个有帮助的助手。请用 Markdown 格式回答用户问题。'
+
+export const DEFAULT_ASSISTANT_MODEL_PARAMS: AssistantModelParams = {
+  temperatureEnabled: true,
+  temperature: 0.7,
+  topPEnabled: false,
+  topP: 1,
+  maxTokensEnabled: false,
+  maxTokens: 2048,
+  customParameters: []
+}
+
 export interface Conversation {
   id: string
   name: string
@@ -80,6 +123,7 @@ export interface Conversation {
   updatedAt: string
   messageCount: number
   llmPresetId?: string
+  assistantId?: string
 }
 
 export interface MessageCitation {
@@ -98,8 +142,39 @@ export interface Message {
   content: string
   createdAt: string
   citations?: MessageCitation[]
+  reasoning?: string
 }
 
+export type ProviderKind = 'deepseek' | 'nvidia' | 'mistral' | 'gemini' | 'custom'
+
+export interface ProviderModelCapabilities {
+  chat: boolean
+  embedding: boolean
+  rerank: boolean
+}
+
+export interface ProviderModel {
+  id: string
+  name?: string
+  capabilities: ProviderModelCapabilities
+}
+
+export interface Provider {
+  id: string
+  name: string
+  kind: ProviderKind
+  isBuiltIn: boolean
+  apiKey: string
+  apiHost: string
+  models: ProviderModel[]
+}
+
+export interface ActiveModelRef {
+  providerId: string
+  modelId: string
+}
+
+/** @deprecated kept only so settings-service can migrate older installs. */
 export interface EmbeddingPreset {
   id: string
   name: string
@@ -108,6 +183,7 @@ export interface EmbeddingPreset {
   model: string
 }
 
+/** @deprecated kept only so settings-service can migrate older installs. */
 export interface RerankPreset {
   id: string
   name: string
@@ -116,6 +192,7 @@ export interface RerankPreset {
   model: string
 }
 
+/** @deprecated kept only so settings-service can migrate older installs. */
 export interface LlmPreset {
   id: string
   name: string
@@ -134,16 +211,26 @@ export interface AppSettings {
   rerankApiUrl: string
   rerankApiKey: string
   rerankModel: string
+
+  providers: Provider[]
+  activeChatModel: ActiveModelRef | null
+  activeEmbeddingModel: ActiveModelRef | null
+  activeRerankModel: ActiveModelRef | null
+
   rerankEnabled: boolean
   proxyEnabled: boolean
   proxyUrl: string
   topK: number
   dataDir: string
-  embeddingPresets: EmbeddingPreset[]
-  rerankPresets: RerankPreset[]
-  llmPresets: LlmPreset[]
   mistralApiKey: string
   mistralApiUrl: string
   mistralOcrModel: string
   userAvatar: string
+
+  /** @deprecated migrated into `providers` on load; never read by new code. */
+  embeddingPresets?: EmbeddingPreset[]
+  /** @deprecated migrated into `providers` on load; never read by new code. */
+  rerankPresets?: RerankPreset[]
+  /** @deprecated migrated into `providers` on load; never read by new code. */
+  llmPresets?: LlmPreset[]
 }
