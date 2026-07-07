@@ -1,8 +1,8 @@
-import { app } from 'electron'
 import { join } from 'path'
+import type { ActiveModelRef, KnowledgeBase } from '@shared/types'
 import Database from 'better-sqlite3'
+import { app } from 'electron'
 import { v4 as uuid } from 'uuid'
-import type { KnowledgeBase } from '@shared/types'
 
 export class KnowledgeBaseService {
   private db: Database.Database
@@ -28,6 +28,7 @@ export class KnowledgeBaseService {
         embedding_api_key TEXT DEFAULT '',
         chunk_size INTEGER DEFAULT 500,
         chunk_overlap INTEGER DEFAULT 50,
+        rerank_model_ref TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         document_count INTEGER DEFAULT 0
@@ -35,13 +36,18 @@ export class KnowledgeBaseService {
     `)
 
     // Migration: add chunk columns to pre-existing knowledge_bases tables
-    const columns = this.db.prepare('PRAGMA table_info(knowledge_bases)').all() as { name: string }[]
+    const columns = this.db.prepare('PRAGMA table_info(knowledge_bases)').all() as {
+      name: string
+    }[]
     const colNames = columns.map((c) => c.name)
     if (!colNames.includes('chunk_size')) {
       this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN chunk_size INTEGER DEFAULT 500')
     }
     if (!colNames.includes('chunk_overlap')) {
       this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN chunk_overlap INTEGER DEFAULT 50')
+    }
+    if (!colNames.includes('rerank_model_ref')) {
+      this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN rerank_model_ref TEXT')
     }
   }
 
@@ -61,15 +67,17 @@ export class KnowledgeBaseService {
     embeddingModel: string
     chunkSize?: number
     chunkOverlap?: number
+    rerankModelRef?: ActiveModelRef | null
   }): KnowledgeBase {
     const now = new Date().toISOString()
     const id = uuid()
     const chunkSize = params.chunkSize ?? 500
     const chunkOverlap = params.chunkOverlap ?? 50
+    const rerankRef = params.rerankModelRef ? JSON.stringify(params.rerankModelRef) : null
     this.db
       .prepare(
-        `INSERT INTO knowledge_bases (id, name, description, category, embedding_model, embedding_api_url, embedding_api_key, chunk_size, chunk_overlap, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO knowledge_bases (id, name, description, category, embedding_model, embedding_api_url, embedding_api_key, chunk_size, chunk_overlap, rerank_model_ref, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -81,6 +89,7 @@ export class KnowledgeBaseService {
         params.embeddingApiKey,
         chunkSize,
         chunkOverlap,
+        rerankRef,
         now,
         now
       )
@@ -101,7 +110,12 @@ export class KnowledgeBaseService {
 
     const fields: string[] = []
     const values: any[] = []
-    for (const [key, value] of Object.entries(updates)) {
+    const { rerankModelRef, ...rest } = updates
+    if (rerankModelRef !== undefined) {
+      fields.push('rerank_model_ref = ?')
+      values.push(rerankModelRef ? JSON.stringify(rerankModelRef) : null)
+    }
+    for (const [key, value] of Object.entries(rest)) {
       if (value !== undefined) {
         const col = key.replace(/([A-Z])/g, '_$1').toLowerCase()
         fields.push(`${col} = ?`)
@@ -128,6 +142,17 @@ export class KnowledgeBaseService {
   }
 
   private rowToKB(row: any): KnowledgeBase {
+    let rerankModelRef: ActiveModelRef | null = null
+    if (row.rerank_model_ref) {
+      try {
+        const parsed = JSON.parse(row.rerank_model_ref)
+        if (parsed && typeof parsed.providerId === 'string' && typeof parsed.modelId === 'string') {
+          rerankModelRef = parsed
+        }
+      } catch {
+        rerankModelRef = null
+      }
+    }
     return {
       id: row.id,
       name: row.name,
@@ -136,6 +161,7 @@ export class KnowledgeBaseService {
       embeddingModel: row.embedding_model,
       embeddingApiUrl: row.embedding_api_url,
       embeddingApiKey: row.embedding_api_key,
+      rerankModelRef,
       chunkSize: row.chunk_size ?? 500,
       chunkOverlap: row.chunk_overlap ?? 50,
       createdAt: row.created_at,

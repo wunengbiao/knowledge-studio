@@ -6,6 +6,7 @@ export interface KnowledgeBase {
   embeddingModel: string
   embeddingApiUrl: string
   embeddingApiKey: string
+  rerankModelRef?: ActiveModelRef | null
   chunkSize: number
   chunkOverlap: number
   createdAt: string

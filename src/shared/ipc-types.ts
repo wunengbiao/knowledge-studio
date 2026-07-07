@@ -165,6 +165,17 @@ export interface IpcChannels {
   }
   'conversation:messages': { request: { conversationId: string }; response: Message[] }
 
+  // Message-level actions
+  'message:delete': { request: { messageId: string }; response: { deletedIds: string[] } }
+  'message:edit': {
+    request: { messageId: string; content: string }
+    response: { userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }
+  }
+  'message:regenerate': {
+    request: { assistantMessageId: string }
+    response: { assistantMessageId: string; citations: MessageCitation[] }
+  }
+
   // Progress events (main → renderer)
   'progress:indexing': {
     request: undefined

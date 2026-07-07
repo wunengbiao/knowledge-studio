@@ -2,6 +2,7 @@ import type { Message, MessageCitation } from '@shared/types'
 import { AlertCircle, Bot, FileText, Loader2, Send, User, X } from 'lucide-react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { MessageActions } from '../components/chat/MessageActions'
 import { ThinkingBlock } from '../components/chat/ThinkingBlock'
 import { CitationTooltip, MessageMarkdown } from '../components/chat/markdown'
 import { useAssistantStore } from '../stores/assistant-store'
@@ -15,14 +16,17 @@ export function ChatPage() {
     currentConversationId,
     conversationMessages,
     conversations,
-    sending,
+    streams,
     error,
     selectConversation,
     sendMessage,
     subscribeProgress,
     clearError,
     createConversation,
-    clearCurrentConversation
+    clearCurrentConversation,
+    deleteMessage,
+    editMessage,
+    regenerateMessage
   } = useChatStore()
   const { assistants, loadAssistants } = useAssistantStore()
   const { knowledgeBases, loadKnowledgeBases } = useKBStore()
@@ -35,6 +39,8 @@ export function ChatPage() {
     messageId: string
     citation: MessageCitation
   } | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editContent, setEditContent] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -44,6 +50,9 @@ export function ChatPage() {
     assistants.find((assistant) => assistant.id === currentConversation?.assistantId) ??
     assistants[0] ??
     null
+  const isStreamingCurrent = Object.values(streams).some(
+    (s) => s.conversationId === currentConversationId
+  )
 
   useEffect(() => {
     loadKnowledgeBases()
@@ -85,7 +94,7 @@ export function ChatPage() {
 
   const handleSend = async () => {
     const trimmed = input.trim()
-    if (!trimmed || sending) return
+    if (!trimmed || isStreamingCurrent) return
     setInput('')
 
     if (!currentConversationId) {
@@ -95,6 +104,49 @@ export function ChatPage() {
 
     await sendMessage(trimmed, selectedKbIds, undefined, currentAssistant?.id)
   }
+
+  const handleStartEdit = useCallback((msg: Message) => {
+    setEditingId(msg.id)
+    setEditContent(msg.content)
+  }, [])
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingId(null)
+    setEditContent('')
+  }, [])
+
+  const handleChangeEdit = useCallback((content: string) => {
+    setEditContent(content)
+  }, [])
+
+  const handleSaveEdit = useCallback(() => {
+    setEditingId((currentId) => {
+      if (!currentId) return null
+      const trimmed = editContent.trim()
+      if (!trimmed) return currentId
+      void editMessage(currentId, trimmed)
+      return null
+    })
+    setEditContent('')
+  }, [editContent, editMessage])
+
+  const handleCopy = useCallback((msg: Message) => {
+    void navigator.clipboard.writeText(msg.content)
+  }, [])
+
+  const handleDelete = useCallback(
+    (msgId: string) => {
+      void deleteMessage(msgId)
+    },
+    [deleteMessage]
+  )
+
+  const handleRegenerate = useCallback(
+    (msgId: string) => {
+      void regenerateMessage(msgId)
+    },
+    [regenerateMessage]
+  )
 
   const toggleKb = (kbId: string) => {
     setSelectedKbIds((prev) =>
@@ -178,7 +230,7 @@ export function ChatPage() {
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 no-drag">
         <div className="space-y-6">
-          {conversationMessages.length === 0 && !sending && (
+          {conversationMessages.length === 0 && !isStreamingCurrent && (
             <div className="text-center py-16 text-gray-400">
               <Bot className="w-12 h-12 mx-auto mb-3 opacity-30" />
               {selectedKbs.length === 0 ? (
@@ -199,12 +251,26 @@ export function ChatPage() {
           )}
 
           {conversationMessages.map((msg) => (
-            <MessageBubble key={msg.id} msg={msg} onCitationClick={setActiveCitation} />
+            <MessageBubble
+              key={msg.id}
+              msg={msg}
+              sending={isStreamingCurrent}
+              isEditing={editingId === msg.id}
+              editContent={editingId === msg.id ? editContent : ''}
+              onCitationClick={setActiveCitation}
+              onStartEdit={handleStartEdit}
+              onCancelEdit={handleCancelEdit}
+              onChangeEdit={handleChangeEdit}
+              onSaveEdit={handleSaveEdit}
+              onCopy={handleCopy}
+              onDelete={handleDelete}
+              onRegenerate={handleRegenerate}
+            />
           ))}
 
-          {sending &&
+          {isStreamingCurrent &&
             conversationMessages[conversationMessages.length - 1]?.role !== 'assistant' && (
-              <div className="flex gap-3 ml-6">
+              <div className="msg-enter flex gap-3 ml-6">
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shrink-0">
                   <Bot className="w-4 h-4 text-white" />
                 </div>
@@ -303,10 +369,10 @@ export function ChatPage() {
             <button
               type="button"
               onClick={handleSend}
-              disabled={!input.trim() || sending}
+              disabled={!input.trim() || isStreamingCurrent}
               className="w-9 h-9 flex items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0"
             >
-              {sending ? (
+              {isStreamingCurrent ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Send className="w-4 h-4" />
@@ -360,15 +426,45 @@ type CitationClickHandler = (v: { messageId: string; citation: MessageCitation }
 
 interface MessageBubbleProps {
   msg: Message
+  sending: boolean
+  isEditing: boolean
+  editContent: string
   onCitationClick: CitationClickHandler
+  onStartEdit: (msg: Message) => void
+  onCancelEdit: () => void
+  onChangeEdit: (content: string) => void
+  onSaveEdit: () => void
+  onCopy: (msg: Message) => void
+  onDelete: (msgId: string) => void
+  onRegenerate: (msgId: string) => void
 }
 
-const MessageBubble = memo(function MessageBubble({ msg, onCitationClick }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({
+  msg,
+  sending,
+  isEditing,
+  editContent,
+  onCitationClick,
+  onStartEdit,
+  onCancelEdit,
+  onChangeEdit,
+  onSaveEdit,
+  onCopy,
+  onDelete,
+  onRegenerate
+}: MessageBubbleProps) {
   const citations = msg.citations ?? []
   const citationMap = useMemo(() => new Map(citations.map((c) => [c.index, c])), [citations])
   const isStreamingThis = msg.role === 'assistant' && msg.content === '' && !msg.reasoning
   const isReasoningStreaming = msg.role === 'assistant' && !!msg.reasoning && msg.content === ''
   const userAvatar = useKBStore((s) => s.settings?.userAvatar) ?? ''
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (isEditing && editTextareaRef.current) {
+      editTextareaRef.current.focus()
+    }
+  }, [isEditing])
 
   const transformChildren = useCallback(
     (children: React.ReactNode) =>
@@ -377,7 +473,9 @@ const MessageBubble = memo(function MessageBubble({ msg, onCitationClick }: Mess
   )
 
   return (
-    <div className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse mr-6' : 'ml-6'}`}>
+    <div
+      className={`group msg-enter flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse mr-6' : 'ml-6'}`}
+    >
       <div
         className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 overflow-hidden ${
           msg.role === 'user'
@@ -398,53 +496,106 @@ const MessageBubble = memo(function MessageBubble({ msg, onCitationClick }: Mess
         )}
       </div>
       <div
-        className={`max-w-[calc(100%-5rem)] rounded-2xl px-4 py-2.5 ${
-          msg.role === 'user'
-            ? 'bg-blue-500 text-white rounded-tr-sm'
-            : 'bg-white border border-gray-200 text-gray-900 rounded-tl-sm shadow-sm'
+        className={`flex flex-col min-w-0 max-w-[calc(100%-5rem)] ${
+          msg.role === 'user' ? 'items-end' : 'items-start'
         }`}
       >
-        {msg.role === 'user' ? (
-          <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
+        {isEditing ? (
+          <div className="w-[min(480px,100%)] rounded-2xl rounded-tr-sm bg-white border border-blue-400 px-4 py-2.5 shadow-sm">
+            <textarea
+              ref={editTextareaRef}
+              value={editContent}
+              onChange={(e) => onChangeEdit(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  onSaveEdit()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  onCancelEdit()
+                }
+              }}
+              className="w-full resize-none outline-none px-2 py-1.5 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 min-h-[60px] text-gray-900"
+            />
+            <div className="flex gap-2 justify-end mt-2">
+              <button
+                type="button"
+                onClick={onCancelEdit}
+                className="px-3 py-1 text-xs text-gray-600 hover:text-gray-900 rounded-md hover:bg-gray-100"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={onSaveEdit}
+                disabled={!editContent.trim() || sending}
+                className="px-3 py-1 text-xs text-white bg-blue-500 hover:bg-blue-600 rounded-md disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                保存
+              </button>
+            </div>
+          </div>
         ) : (
-          <>
-            {(msg.reasoning || isReasoningStreaming) && (
-              <ThinkingBlock reasoning={msg.reasoning} streaming={isReasoningStreaming} />
-            )}
-            {isStreamingThis ? (
-              <div className="flex items-center gap-2 text-sm text-gray-500 py-1">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {citations.length > 0 ? '正在检索并思考...' : '正在思考...'}
-              </div>
+          <div
+            className={`rounded-2xl px-4 py-2.5 ${
+              msg.role === 'user'
+                ? 'bg-blue-500 text-white rounded-tr-sm'
+                : 'bg-white border border-gray-200 text-gray-900 rounded-tl-sm shadow-sm'
+            }`}
+          >
+            {msg.role === 'user' ? (
+              <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
             ) : (
-              <MessageMarkdown content={msg.content} transformChildren={transformChildren} />
-            )}
+              <>
+                {(msg.reasoning || isReasoningStreaming) && (
+                  <ThinkingBlock reasoning={msg.reasoning} streaming={isReasoningStreaming} />
+                )}
+                {isStreamingThis ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500 py-1">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {citations.length > 0 ? '正在检索并思考...' : '正在思考...'}
+                  </div>
+                ) : (
+                  <MessageMarkdown content={msg.content} transformChildren={transformChildren} />
+                )}
 
-            {!isStreamingThis && citations.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-gray-100">
-                <div className="flex items-center gap-1.5 mb-1.5 text-[11px] text-gray-400">
-                  <FileText className="w-3 h-3" />
-                  <span>引用来源 · {citations.length}</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {citations.map((c) => (
-                    <CitationTooltip key={c.index} citation={c}>
-                      <button
-                        type="button"
-                        onClick={() => onCitationClick({ messageId: msg.id, citation: c })}
-                        className="group/cite inline-flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] transition-colors"
-                      >
-                        <span className="inline-flex items-center justify-center w-[18px] h-[18px] rounded-full bg-blue-500 group-hover/cite:bg-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors">
-                          {c.index}
-                        </span>
-                        <span className="max-w-[200px] truncate">{c.docTitle}</span>
-                      </button>
-                    </CitationTooltip>
-                  ))}
-                </div>
-              </div>
+                {!isStreamingThis && citations.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <div className="flex items-center gap-1.5 mb-1.5 text-[11px] text-gray-400">
+                      <FileText className="w-3 h-3" />
+                      <span>引用来源 · {citations.length}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {citations.map((c) => (
+                        <CitationTooltip key={c.index} citation={c}>
+                          <button
+                            type="button"
+                            onClick={() => onCitationClick({ messageId: msg.id, citation: c })}
+                            className="group/cite inline-flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] transition-colors"
+                          >
+                            <span className="inline-flex items-center justify-center w-[18px] h-[18px] rounded-full bg-blue-500 group-hover/cite:bg-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors">
+                              {c.index}
+                            </span>
+                            <span className="max-w-[200px] truncate">{c.docTitle}</span>
+                          </button>
+                        </CitationTooltip>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
-          </>
+          </div>
+        )}
+        {!isStreamingThis && !isEditing && (
+          <MessageActions
+            role={msg.role}
+            disabled={sending}
+            onCopy={() => onCopy(msg)}
+            onEdit={() => onStartEdit(msg)}
+            onDelete={() => onDelete(msg.id)}
+            onRegenerate={() => onRegenerate(msg.id)}
+          />
         )}
       </div>
     </div>

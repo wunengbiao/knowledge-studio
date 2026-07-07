@@ -13,6 +13,7 @@ import { net, app } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { AssistantService } from './assistant-service'
 import { buildChatCompletionMessages } from './chat-message-builder'
+import { type KbSummary, shouldRetrieveKnowledge } from './retrieval-judge'
 import { SearchService } from './search-service'
 import { SettingsService, resolveCapabilityUrl } from './settings-service'
 
@@ -235,6 +236,8 @@ export class ChatService {
     const effectiveKbIds = params.kbIds
     const effectiveAssistantId =
       params.assistantId ?? existing.conversation.assistantId ?? assistant.id
+    const effectivePresetId =
+      llmPresetId !== undefined ? llmPresetId : existing.conversation.llmPresetId
 
     const userMessage = this.appendMessage(conversationId, 'user', message)
     this.updateKbIds(conversationId, effectiveKbIds)
@@ -250,17 +253,29 @@ export class ChatService {
 
     let contexts: SearchResult[] = []
     if (effectiveKbIds.length > 0) {
-      const perKb = Math.max(2, Math.ceil(topK / effectiveKbIds.length))
-      for (const kbId of effectiveKbIds) {
-        try {
-          const results = await this.searchService.search(kbId, message, 'hybrid', perKb)
-          contexts.push(...results)
-        } catch (e) {
-          console.error('[chat:sendMessage] 检索失败 kbId=', kbId, e)
+      const judgeEndpoint = this.resolveChatEndpoint(assistant, effectivePresetId)
+      const shouldRetrieve = await shouldRetrieveKnowledge({
+        endpoint: judgeEndpoint,
+        history: existing.messages,
+        userMessage: message,
+        kbSummaries: this.getKbSummaries(effectiveKbIds)
+      })
+
+      if (shouldRetrieve) {
+        const perKb = Math.max(2, Math.ceil(topK / effectiveKbIds.length))
+        for (const kbId of effectiveKbIds) {
+          try {
+            const results = await this.searchService.search(kbId, message, 'hybrid', perKb)
+            contexts.push(...results)
+          } catch (e) {
+            console.error('[chat:sendMessage] 检索失败 kbId=', kbId, e)
+          }
         }
+        contexts.sort((a, b) => b.score - a.score)
+        contexts = contexts.slice(0, topK)
+      } else {
+        console.log('[chat:sendMessage] 判断器决定跳过知识库检索')
       }
-      contexts.sort((a, b) => b.score - a.score)
-      contexts = contexts.slice(0, topK)
     }
 
     const citations: MessageCitation[] = contexts.map((c, i) => ({
@@ -286,9 +301,6 @@ export class ChatService {
       )
       .run(now, conversationId)
 
-    const effectivePresetId =
-      llmPresetId !== undefined ? llmPresetId : existing.conversation.llmPresetId
-
     this.streamLLMResponse(
       assistantMessageId,
       conversationId,
@@ -306,6 +318,210 @@ export class ChatService {
     })
 
     return { userMessage, assistantMessageId, citations }
+  }
+
+  deleteMessage(messageId: string): { deletedIds: string[] } {
+    const target = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as
+      | MessageRow
+      | undefined
+    if (!target) return { deletedIds: [] }
+
+    const rows = this.db
+      .prepare(
+        'SELECT id FROM messages WHERE conversation_id = ? AND created_at >= ? ORDER BY created_at ASC'
+      )
+      .all(target.conversation_id, target.created_at) as { id: string }[]
+    const deletedIds = rows.map((r) => r.id)
+    if (deletedIds.length === 0) return { deletedIds: [] }
+
+    const placeholders = deletedIds.map(() => '?').join(',')
+    this.db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...deletedIds)
+    const now = new Date().toISOString()
+    this.db
+      .prepare(
+        'UPDATE conversations SET message_count = max(message_count - ?, 0), updated_at = ? WHERE id = ?'
+      )
+      .run(deletedIds.length, now, target.conversation_id)
+
+    return { deletedIds }
+  }
+
+  async editUserMessage(
+    messageId: string,
+    content: string,
+    emitter?: StreamEmitter
+  ): Promise<{ userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }> {
+    const trimmed = content.trim()
+    if (!trimmed) throw new Error('消息内容不能为空')
+
+    const target = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as
+      | MessageRow
+      | undefined
+    if (!target) throw new Error('消息不存在')
+    if (target.role !== 'user') throw new Error('只能编辑用户消息')
+
+    this.db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(trimmed, messageId)
+
+    const subsequent = this.db
+      .prepare(
+        'SELECT id FROM messages WHERE conversation_id = ? AND created_at > ? ORDER BY created_at ASC'
+      )
+      .all(target.conversation_id, target.created_at) as { id: string }[]
+    if (subsequent.length > 0) {
+      const subsequentIds = subsequent.map((r) => r.id)
+      const placeholders = subsequentIds.map(() => '?').join(',')
+      this.db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...subsequentIds)
+      const now = new Date().toISOString()
+      this.db
+        .prepare(
+          'UPDATE conversations SET message_count = max(message_count - ?, 0), updated_at = ? WHERE id = ?'
+        )
+        .run(subsequentIds.length, now, target.conversation_id)
+    }
+
+    const updatedRow = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as
+      | MessageRow
+      | undefined
+    if (!updatedRow) throw new Error('编辑后消息不存在')
+    const userMessage = this.rowToMessage(updatedRow)
+
+    const result = await this.streamResponseForExistingUserMessage(
+      target.conversation_id,
+      messageId,
+      trimmed,
+      emitter
+    )
+    return {
+      userMessage,
+      assistantMessageId: result.assistantMessageId,
+      citations: result.citations
+    }
+  }
+
+  async regenerateAssistantMessage(
+    assistantMessageId: string,
+    emitter?: StreamEmitter
+  ): Promise<{ assistantMessageId: string; citations: MessageCitation[] }> {
+    const target = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(assistantMessageId) as
+      | MessageRow
+      | undefined
+    if (!target) throw new Error('消息不存在')
+    if (target.role !== 'assistant') throw new Error('只能重新生成助手消息')
+
+    const userRow = this.db
+      .prepare(
+        "SELECT * FROM messages WHERE conversation_id = ? AND role = 'user' AND created_at < ? ORDER BY created_at DESC LIMIT 1"
+      )
+      .get(target.conversation_id, target.created_at) as MessageRow | undefined
+    if (!userRow) throw new Error('找不到对应的用户消息')
+
+    const rows = this.db
+      .prepare(
+        'SELECT id FROM messages WHERE conversation_id = ? AND created_at >= ? ORDER BY created_at ASC'
+      )
+      .all(target.conversation_id, target.created_at) as { id: string }[]
+    const deletedIds = rows.map((r) => r.id)
+    const placeholders = deletedIds.map(() => '?').join(',')
+    this.db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...deletedIds)
+    const now = new Date().toISOString()
+    this.db
+      .prepare(
+        'UPDATE conversations SET message_count = max(message_count - ?, 0), updated_at = ? WHERE id = ?'
+      )
+      .run(deletedIds.length, now, target.conversation_id)
+
+    return this.streamResponseForExistingUserMessage(
+      target.conversation_id,
+      userRow.id,
+      userRow.content,
+      emitter
+    )
+  }
+
+  private async streamResponseForExistingUserMessage(
+    conversationId: string,
+    currentUserMessageId: string,
+    userMessageContent: string,
+    emitter?: StreamEmitter,
+    topK = 10
+  ): Promise<{ assistantMessageId: string; citations: MessageCitation[] }> {
+    const existing = this.get(conversationId)
+    if (!existing) throw new Error('对话不存在')
+
+    const assistant = this.assistantService.resolveAssistant(existing.conversation.assistantId)
+    const effectiveKbIds = existing.conversation.kbIds
+    const effectivePresetId = existing.conversation.llmPresetId
+
+    let contexts: SearchResult[] = []
+    if (effectiveKbIds.length > 0) {
+      const judgeEndpoint = this.resolveChatEndpoint(assistant, effectivePresetId)
+      const shouldRetrieve = await shouldRetrieveKnowledge({
+        endpoint: judgeEndpoint,
+        history: existing.messages,
+        userMessage: userMessageContent,
+        kbSummaries: this.getKbSummaries(effectiveKbIds)
+      })
+
+      if (shouldRetrieve) {
+        const perKb = Math.max(2, Math.ceil(topK / effectiveKbIds.length))
+        for (const kbId of effectiveKbIds) {
+          try {
+            const results = await this.searchService.search(
+              kbId,
+              userMessageContent,
+              'hybrid',
+              perKb
+            )
+            contexts.push(...results)
+          } catch (e) {
+            console.error('[chat:streamResponseForExistingUserMessage] 检索失败 kbId=', kbId, e)
+          }
+        }
+        contexts.sort((a, b) => b.score - a.score)
+        contexts = contexts.slice(0, topK)
+      }
+    }
+
+    const citations: MessageCitation[] = contexts.map((c, i) => ({
+      index: i + 1,
+      chunkId: c.chunkId,
+      docId: c.docId,
+      docTitle: c.docTitle,
+      content: c.content,
+      score: c.score
+    }))
+
+    const assistantMessageId = uuid()
+    const now = new Date().toISOString()
+    this.db
+      .prepare(
+        `INSERT INTO messages (id, conversation_id, role, content, created_at, citations, reasoning)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(assistantMessageId, conversationId, 'assistant', '', now, JSON.stringify(citations), '')
+    this.db
+      .prepare(
+        'UPDATE conversations SET message_count = message_count + 1, updated_at = ? WHERE id = ?'
+      )
+      .run(now, conversationId)
+
+    this.streamLLMResponse(
+      assistantMessageId,
+      conversationId,
+      currentUserMessageId,
+      userMessageContent,
+      contexts,
+      assistant,
+      effectivePresetId,
+      emitter
+    ).catch((e) => {
+      console.error('[chat:streamResponseForExistingUserMessage] LLM stream failed:', e)
+      this.removeFailedAssistantMessage(conversationId, assistantMessageId)
+      const messageText = e instanceof Error ? e.message : 'LLM 响应失败'
+      emitter?.onError(assistantMessageId, messageText)
+    })
+
+    return { assistantMessageId, citations }
   }
 
   private async streamLLMResponse(
@@ -516,6 +732,18 @@ export class ChatService {
     this.db
       .prepare('UPDATE conversations SET kb_ids = ? WHERE id = ?')
       .run(JSON.stringify(kbIds), conversationId)
+  }
+
+  private getKbSummaries(kbIds: string[]): KbSummary[] {
+    if (kbIds.length === 0) return []
+    const placeholders = kbIds.map(() => '?').join(',')
+    const rows = this.db
+      .prepare(`SELECT name, description FROM knowledge_bases WHERE id IN (${placeholders})`)
+      .all(...kbIds) as { name: string; description: string | null }[]
+    return rows.map((row) => ({
+      name: row.name,
+      description: row.description ?? ''
+    }))
   }
 
   private removeFailedAssistantMessage(conversationId: string, assistantMessageId: string): void {

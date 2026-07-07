@@ -1,28 +1,3 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import {
-  ArrowLeft,
-  Bot,
-  Save,
-  Key,
-  Check,
-  FlaskConical,
-  Loader2,
-  XCircle,
-  Wifi,
-  ScanText,
-  User as UserIcon,
-  Upload,
-  Trash2,
-  Plus,
-  Sparkles,
-  ChevronRight,
-  MessageSquare,
-  Search,
-  Layers,
-  ListOrdered
-} from 'lucide-react'
-import { useKBStore } from '../stores/kb-store'
 import type {
   ActiveModelRef,
   AppSettings,
@@ -32,10 +7,35 @@ import type {
   ProviderModel
 } from '@shared/types'
 import {
+  ArrowLeft,
+  Bot,
+  Check,
+  ChevronRight,
+  FlaskConical,
+  Key,
+  Layers,
+  ListOrdered,
+  Loader2,
+  MessageSquare,
+  Plus,
+  Save,
+  ScanText,
+  Search,
+  Sparkles,
+  Trash2,
+  Upload,
+  User as UserIcon,
+  Wifi,
+  XCircle
+} from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import {
   type AssistantFormValue,
   AssistantSettingsPanel
 } from '../components/assistant/AssistantSettingsPanel'
 import { useAssistantStore } from '../stores/assistant-store'
+import { useKBStore } from '../stores/kb-store'
 
 type Capability = 'chat' | 'embedding' | 'rerank'
 type FetchCapabilityFilter = Capability | 'all'
@@ -1172,20 +1172,6 @@ export function SettingsPage() {
                         })}
                       </div>
                     )}
-                  </SettingGroup>
-
-                  <SettingGroup>
-                    <SettingRow
-                      label="启用 ReRank"
-                      description="全局开关,关闭后所有提供商均不执行重排序。"
-                    >
-                      <div className="flex justify-end">
-                        <Toggle
-                          on={form.rerankEnabled}
-                          onChange={() => update('rerankEnabled', form.rerankEnabled ? 0 : 1)}
-                        />
-                      </div>
-                    </SettingRow>
                   </SettingGroup>
                 </div>
               </div>

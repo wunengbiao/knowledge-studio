@@ -1,8 +1,15 @@
-import { app, net } from 'electron'
 import { join } from 'path'
+import type {
+  ActiveModelRef,
+  AppSettings,
+  KnowledgeBase,
+  ProviderKind,
+  SearchResult
+} from '@shared/types'
 import Database from 'better-sqlite3'
-import type { SearchResult, AppSettings, KnowledgeBase, ProviderKind } from '@shared/types'
+import { net, app } from 'electron'
 import { embeddingService } from './embedding-service'
+import { SettingsService, resolveCapabilityUrl } from './settings-service'
 import { tokenize } from './tokenizer'
 import { VectorStore } from './vector-store'
 
@@ -17,6 +24,7 @@ interface ChunkRecord {
 
 export class SearchService {
   private db: Database.Database
+  private settingsService = new SettingsService()
 
   constructor() {
     const dataDir = join(app.getPath('userData'), 'rag-data')
@@ -45,7 +53,16 @@ export class SearchService {
       if (chunks.length === 0) return []
       const bm25Results = this.bm25Search(chunks, query, topK * 2)
       const vectorResults = await this.vectorSearch(kbId, query, topK * 2, onProgress)
-      return this.rrfMerge(bm25Results, vectorResults, topK)
+      const merged = this.rrfMerge(bm25Results, vectorResults, topK)
+      const kb = this.getKb(kbId)
+      if (kb?.rerankModelRef) {
+        try {
+          return await this.rerankResults(query, merged, kb.rerankModelRef)
+        } catch (e) {
+          console.error('[search] rerank failed:', e)
+        }
+      }
+      return merged
     }
 
     if (mode === 'graph') {
@@ -268,28 +285,38 @@ export class SearchService {
     topK: number,
     k = 60
   ): SearchResult[] {
-    const scoreMap = new Map<string, { result: SearchResult; score: number }>()
+    const scoreMap = new Map<string, { result: SearchResult; rrfScore: number }>()
 
     for (let i = 0; i < resultsA.length; i++) {
       const r = resultsA[i]
-      scoreMap.set(r.chunkId, { result: r, score: 1 / (k + i + 1) })
+      scoreMap.set(r.chunkId, { result: r, rrfScore: 1 / (k + i + 1) })
     }
 
     for (let i = 0; i < resultsB.length; i++) {
       const r = resultsB[i]
       const existing = scoreMap.get(r.chunkId)
       if (existing) {
-        existing.score += 1 / (k + i + 1)
+        existing.rrfScore += 1 / (k + i + 1)
         existing.result.source = 'hybrid'
       } else {
-        scoreMap.set(r.chunkId, { result: r, score: 1 / (k + i + 1) })
+        scoreMap.set(r.chunkId, { result: r, rrfScore: 1 / (k + i + 1) })
       }
     }
 
-    return [...scoreMap.values()]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, topK)
-      .map(({ result, score }) => ({ ...result, score }))
+    const sorted = [...scoreMap.values()].sort((a, b) => b.rrfScore - a.rrfScore).slice(0, topK)
+    if (sorted.length === 0) return []
+
+    // RRF 原始分数落在 0.01-0.03 量级，直接展示会显示为 1-3% 显得过低；
+    // min-max 归一化到 [0.4, 0.9] 使相关度百分比落在合理区间，排序保持不变
+    const maxScore = sorted[0].rrfScore
+    const minScore = sorted[sorted.length - 1].rrfScore
+    const FLOOR = 0.4
+    const CEILING = 0.9
+
+    return sorted.map(({ result, rrfScore }) => {
+      const ratio = maxScore === minScore ? 1 : (rrfScore - minScore) / (maxScore - minScore)
+      return { ...result, score: FLOOR + ratio * (CEILING - FLOOR) }
+    })
   }
 
   private cosineSimilarity(a: number[], b: number[]): number {
@@ -314,9 +341,7 @@ export class SearchService {
         const start = Math.max(0, idx - 40)
         const end = Math.min(text.length, idx + term.length + 40)
         highlights.push(
-          (start > 0 ? '...' : '') +
-            text.slice(start, end) +
-            (end < text.length ? '...' : '')
+          (start > 0 ? '...' : '') + text.slice(start, end) + (end < text.length ? '...' : '')
         )
       }
     }
@@ -348,6 +373,18 @@ export class SearchService {
       embeddingApiKey: row.embedding_api_key,
       chunkSize: row.chunk_size ?? 500,
       chunkOverlap: row.chunk_overlap ?? 50,
+      rerankModelRef: row.rerank_model_ref
+        ? (() => {
+            try {
+              const p = JSON.parse(row.rerank_model_ref)
+              return p && typeof p.providerId === 'string' && typeof p.modelId === 'string'
+                ? p
+                : null
+            } catch {
+              return null
+            }
+          })()
+        : null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       documentCount: row.document_count
@@ -382,6 +419,57 @@ export class SearchService {
     if (!response.ok) {
       throw new Error(`ReRank API 返回错误: HTTP ${response.status}`)
     }
+  }
+
+  private async rerankResults(
+    query: string,
+    results: SearchResult[],
+    ref: ActiveModelRef
+  ): Promise<SearchResult[]> {
+    if (results.length === 0) return results
+    const settings = this.settingsService.get()
+    const provider = settings.providers.find((p) => p.id === ref.providerId)
+    const model = provider?.models.find((m) => m.id === ref.modelId && m.capabilities.rerank)
+    if (!provider || !model) {
+      console.warn('[search] rerank model not found:', ref)
+      return results
+    }
+    const apiUrl = resolveCapabilityUrl(provider, 'rerank')
+    const response = await net.fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {})
+      },
+      body: JSON.stringify({
+        model: ref.modelId,
+        query,
+        documents: results.map((r) => r.content)
+      }),
+      signal: AbortSignal.timeout(30000)
+    })
+    if (!response.ok) {
+      throw new Error(`ReRank API 返回错误: HTTP ${response.status}`)
+    }
+    const data = await response.json()
+    const ranked: { index: number; score: number }[] = Array.isArray(data?.results)
+      ? data.results.map((r: { index: number; relevance_score?: number }) => ({
+          index: r.index,
+          score: r.relevance_score ?? 0
+        }))
+      : Array.isArray(data?.data)
+        ? data.data.map((r: { index: number; relevance_score?: number }) => ({
+            index: r.index,
+            score: r.relevance_score ?? 0
+          }))
+        : []
+    if (ranked.length === 0) return results
+    const scoreMap = new Map<number, number>()
+    for (const r of ranked) scoreMap.set(r.index, r.score)
+    return results
+      .map((r, i) => ({ r, score: scoreMap.get(i) ?? 0 }))
+      .sort((a, b) => b.score - a.score)
+      .map((x) => ({ ...x.r, score: x.score }))
   }
 
   async testLlm(config: { apiUrl: string; apiKey: string; model: string }): Promise<void> {
@@ -458,8 +546,6 @@ export class SearchService {
       data?: { id: string; owned_by?: string }[]
     }
     const list = data.data ?? []
-    return list
-      .map((m) => ({ id: m.id, ownedBy: m.owned_by }))
-      .filter((m) => m.id)
+    return list.map((m) => ({ id: m.id, ownedBy: m.owned_by })).filter((m) => m.id)
   }
 }

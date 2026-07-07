@@ -33,9 +33,7 @@ export function CreateKBModal() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState<KnowledgeBase['category']>('general')
-  const [embeddingApiUrl, setEmbeddingApiUrl] = useState('')
-  const [embeddingApiKey, setEmbeddingApiKey] = useState('')
-  const [embeddingModel, setEmbeddingModel] = useState('')
+  const [embeddingRef, setEmbeddingRef] = useState('')
   const [chunkSize, setChunkSize] = useState(DEFAULT_CHUNK_SIZE)
   const [chunkOverlap, setChunkOverlap] = useState(DEFAULT_CHUNK_OVERLAP)
   const [creating, setCreating] = useState(false)
@@ -46,9 +44,8 @@ export function CreateKBModal() {
   // already-configured defaults to flow in automatically.
   useEffect(() => {
     if (createModalOpen) {
-      setEmbeddingApiUrl(settings?.embeddingApiUrl ?? '')
-      setEmbeddingApiKey(settings?.embeddingApiKey ?? '')
-      setEmbeddingModel(settings?.embeddingModel ?? '')
+      const ref = settings?.activeEmbeddingModel
+      setEmbeddingRef(ref ? `${ref.providerId}::${ref.modelId}` : '')
       setError(null)
     }
   }, [createModalOpen, settings])
@@ -59,9 +56,7 @@ export function CreateKBModal() {
       setName('')
       setDescription('')
       setCategory('general')
-      setEmbeddingApiUrl('')
-      setEmbeddingApiKey('')
-      setEmbeddingModel('')
+      setEmbeddingRef('')
       setChunkSize(DEFAULT_CHUNK_SIZE)
       setChunkOverlap(DEFAULT_CHUNK_OVERLAP)
       setError(null)
@@ -70,24 +65,28 @@ export function CreateKBModal() {
 
   if (!createModalOpen) return null
 
-  const canSubmit =
-    name.trim().length > 0 &&
-    embeddingApiUrl.trim().length > 0 &&
-    embeddingModel.trim().length > 0 &&
-    !creating
+  const canSubmit = name.trim().length > 0 && embeddingRef.trim().length > 0 && !creating
 
   const handleSubmit = async () => {
     if (!canSubmit) return
     setCreating(true)
     setError(null)
     try {
+      const [providerId, ...rest] = embeddingRef.split('::')
+      const modelId = rest.join('::')
+      const provider = settings?.providers.find((p) => p.id === providerId)
+      if (!provider) {
+        setError('Embedding 提供商不存在')
+        return
+      }
+      const apiUrl = `${provider.apiHost.replace(/\/+$/, '')}/embeddings`
       const kb = await createKB({
         name: name.trim(),
         description: description.trim(),
         category,
-        embeddingApiUrl: embeddingApiUrl.trim(),
-        embeddingApiKey: embeddingApiKey.trim(),
-        embeddingModel: embeddingModel.trim(),
+        embeddingApiUrl: apiUrl,
+        embeddingApiKey: provider.apiKey,
+        embeddingModel: modelId,
         chunkSize,
         chunkOverlap
       })
@@ -214,40 +213,47 @@ export function CreateKBModal() {
               </span>
             </div>
             <p className="text-xs text-gray-400 mb-3">
-              默认使用全局设置中的 Embedding 配置，可根据需要覆盖。配置在创建后锁定。
+              选择提供 Embedding 能力的模型，配置在创建后锁定。
             </p>
-            <div className="space-y-2.5">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">模型</label>
-                <input
-                  type="text"
-                  value={embeddingModel}
-                  onChange={(e) => setEmbeddingModel(e.target.value)}
-                  placeholder="如 text-embedding-3-small"
+            {(() => {
+              const options: {
+                providerName: string
+                models: { value: string; label: string }[]
+              }[] = []
+              for (const p of settings?.providers ?? []) {
+                const models = p.models.filter((m) => m.capabilities.embedding && m.id.trim())
+                if (models.length === 0) continue
+                options.push({
+                  providerName: p.name,
+                  models: models.map((m) => ({
+                    value: `${p.id}::${m.id}`,
+                    label: m.name ? `${m.id} · ${m.name}` : m.id
+                  }))
+                })
+              }
+              return options.length > 0 ? (
+                <select
+                  value={embeddingRef}
+                  onChange={(e) => setEmbeddingRef(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">API 地址</label>
-                <input
-                  type="text"
-                  value={embeddingApiUrl}
-                  onChange={(e) => setEmbeddingApiUrl(e.target.value)}
-                  placeholder="https://api.openai.com/v1/embeddings"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">API Key</label>
-                <input
-                  type="password"
-                  value={embeddingApiKey}
-                  onChange={(e) => setEmbeddingApiKey(e.target.value)}
-                  placeholder="sk-..."
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
+                >
+                  <option value="">未选择</option>
+                  {options.map((g) => (
+                    <optgroup key={g.providerName} label={g.providerName}>
+                      {g.models.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              ) : (
+                <div className="text-xs text-gray-400 px-1">
+                  尚未在任一提供商中勾选 Embedding 能力。
+                </div>
+              )
+            })()}
           </div>
 
           {error && (

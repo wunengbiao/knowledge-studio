@@ -274,6 +274,68 @@ export function registerIpcHandlers(): void {
     chatService.getMessages(conversationId)
   )
 
+  ipcMain.handle('message:delete', async (_e, { messageId }) =>
+    chatService.deleteMessage(messageId)
+  )
+
+  ipcMain.handle('message:edit', async (_e, { messageId, content }) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    try {
+      const result = await chatService.editUserMessage(messageId, content, {
+        onDelta: (assistantMessageId, delta) => {
+          win?.webContents.send('chat:stream-delta', { assistantMessageId, delta })
+        },
+        onReasoning: (assistantMessageId, delta) => {
+          win?.webContents.send('chat:stream-reasoning', { assistantMessageId, delta })
+        },
+        onDone: (assistantMessageId, content2, reasoning, createdAt) => {
+          win?.webContents.send('chat:stream-done', {
+            assistantMessageId,
+            content: content2,
+            reasoning,
+            createdAt
+          })
+        },
+        onError: (assistantMessageId, error) => {
+          win?.webContents.send('chat:error', { error, assistantMessageId })
+        }
+      })
+      return result
+    } catch (e: any) {
+      win?.webContents.send('chat:error', { error: e.message || '请求失败' })
+      throw e
+    }
+  })
+
+  ipcMain.handle('message:regenerate', async (_e, { assistantMessageId }) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    try {
+      const result = await chatService.regenerateAssistantMessage(assistantMessageId, {
+        onDelta: (id, delta) => {
+          win?.webContents.send('chat:stream-delta', { assistantMessageId: id, delta })
+        },
+        onReasoning: (id, delta) => {
+          win?.webContents.send('chat:stream-reasoning', { assistantMessageId: id, delta })
+        },
+        onDone: (id, content, reasoning, createdAt) => {
+          win?.webContents.send('chat:stream-done', {
+            assistantMessageId: id,
+            content,
+            reasoning,
+            createdAt
+          })
+        },
+        onError: (id, error) => {
+          win?.webContents.send('chat:error', { error, assistantMessageId: id })
+        }
+      })
+      return result
+    } catch (e: any) {
+      win?.webContents.send('chat:error', { error: e.message || '请求失败' })
+      throw e
+    }
+  })
+
   // ─── File Dialog ──────────────────────────────────────
   ipcMain.handle('dialog:open-file', async (_e, { filters }) => {
     const result = await dialog.showOpenDialog({
