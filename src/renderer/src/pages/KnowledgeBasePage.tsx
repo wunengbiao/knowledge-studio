@@ -187,8 +187,8 @@ export function KnowledgeBasePage() {
   const HeaderIcon = getKbIcon(kb)
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-6xl mx-auto px-8 py-8">
+    <div className="h-full flex flex-col">
+      <div className="max-w-6xl mx-auto px-8 pt-8 w-full shrink-0">
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
           <button
@@ -337,6 +337,10 @@ export function KnowledgeBasePage() {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-6xl mx-auto px-8 pb-8">
 
         {/* Document List */}
         <div>
@@ -669,6 +673,7 @@ export function KnowledgeBasePage() {
             </div>
           </div>
         )}
+        </div>
       </div>
     </div>
   )
