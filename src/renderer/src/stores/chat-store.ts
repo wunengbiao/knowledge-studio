@@ -567,13 +567,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const cleanupDone = window.electronAPI.on(
       'chat:stream-done',
-      ({ assistantMessageId, content, reasoning, createdAt }) => {
+      ({ assistantMessageId, content, reasoning, createdAt, citations }) => {
         set((state) => {
           const entry = state.streams[assistantMessageId]
           if (!entry) return state
           const updatedMessages = state.conversationMessages.map((m) =>
             m.id === assistantMessageId
-              ? { ...m, content, reasoning: reasoning || m.reasoning, createdAt }
+              ? { ...m, content, reasoning: reasoning || m.reasoning, createdAt, citations }
               : m
           )
           const { [assistantMessageId]: _consumed, ...restStreams } = state.streams

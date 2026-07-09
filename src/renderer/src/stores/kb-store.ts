@@ -1,5 +1,5 @@
+import type { AppSettings, KnowledgeBase } from '@shared/types'
 import { create } from 'zustand'
-import type { KnowledgeBase, AppSettings } from '@shared/types'
 
 interface KBState {
   knowledgeBases: KnowledgeBase[]
@@ -13,6 +13,7 @@ interface KBState {
     name: string
     description: string
     category: KnowledgeBase['category']
+    icon?: string | null
     embeddingApiUrl: string
     embeddingApiKey: string
     embeddingModel: string

@@ -11,18 +11,21 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useTranslation, type TranslationKey } from '../i18n'
+import { type TranslationKey, useTranslation } from '../i18n'
 import { useKBStore } from '../stores/kb-store'
+import { KB_ICONS, KB_ICON_NAMES } from './kb-icon'
 
-const categoryConfig: Record<KnowledgeBase['category'], { icon: typeof BookOpen; labelKey: TranslationKey }> =
-  {
-    general: { icon: BookOpen, labelKey: 'category.general' },
-    technical: { icon: BrainCircuit, labelKey: 'category.technical' },
-    research: { icon: Globe, labelKey: 'category.research' },
-    legal: { icon: Scale, labelKey: 'category.legal' },
-    medical: { icon: Stethoscope, labelKey: 'category.medical' },
-    custom: { icon: FolderOpen, labelKey: 'category.custom' }
-  }
+const categoryConfig: Record<
+  KnowledgeBase['category'],
+  { icon: typeof BookOpen; labelKey: TranslationKey }
+> = {
+  general: { icon: BookOpen, labelKey: 'category.general' },
+  technical: { icon: BrainCircuit, labelKey: 'category.technical' },
+  research: { icon: Globe, labelKey: 'category.research' },
+  legal: { icon: Scale, labelKey: 'category.legal' },
+  medical: { icon: Stethoscope, labelKey: 'category.medical' },
+  custom: { icon: FolderOpen, labelKey: 'category.custom' }
+}
 
 const DEFAULT_CHUNK_SIZE = 500
 const DEFAULT_CHUNK_OVERLAP = 50
@@ -40,6 +43,7 @@ export function CreateKBModal() {
   const [chunkOverlap, setChunkOverlap] = useState(DEFAULT_CHUNK_OVERLAP)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [icon, setIcon] = useState<string | null>(null)
 
   // Pre-fill embedding fields from global settings when the modal opens.
   // Embedding config is locked after creation, so we want the user's
@@ -62,6 +66,7 @@ export function CreateKBModal() {
       setChunkSize(DEFAULT_CHUNK_SIZE)
       setChunkOverlap(DEFAULT_CHUNK_OVERLAP)
       setError(null)
+      setIcon(null)
     }
   }, [createModalOpen])
 
@@ -86,6 +91,7 @@ export function CreateKBModal() {
         name: name.trim(),
         description: description.trim(),
         category,
+        icon: icon ?? undefined,
         embeddingApiUrl: apiUrl,
         embeddingApiKey: provider.apiKey,
         embeddingModel: modelId,
@@ -123,7 +129,9 @@ export function CreateKBModal() {
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('createKb.name')}</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {t('createKb.name')}
+            </label>
             <input
               type="text"
               value={name}
@@ -139,7 +147,8 @@ export function CreateKBModal() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              {t('createKb.description')} <span className="text-gray-400 font-normal">{t('common.optional')}</span>
+              {t('createKb.description')}{' '}
+              <span className="text-gray-400 font-normal">{t('common.optional')}</span>
             </label>
             <input
               type="text"
@@ -151,7 +160,9 @@ export function CreateKBModal() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">{t('createKb.category')}</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              {t('createKb.category')}
+            </label>
             <div className="grid grid-cols-3 gap-2">
               {(Object.keys(categoryConfig) as KnowledgeBase['category'][]).map((cat) => {
                 const cfg = categoryConfig[cat]
@@ -169,6 +180,34 @@ export function CreateKBModal() {
                   >
                     <Icon className="w-4 h-4" />
                     {t(cfg.labelKey)}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {t('createKb.icon')}{' '}
+              <span className="text-gray-400 font-normal">{t('createKb.iconDesc')}</span>
+            </label>
+            <div className="grid grid-cols-10 gap-1.5">
+              {KB_ICON_NAMES.map((iconName) => {
+                const IconComp = KB_ICONS[iconName]
+                const selected = icon === iconName
+                return (
+                  <button
+                    key={iconName}
+                    type="button"
+                    onClick={() => setIcon(selected ? null : iconName)}
+                    title={iconName}
+                    className={`flex items-center justify-center p-2 rounded-lg border transition-all ${
+                      selected
+                        ? 'border-blue-300 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                    }`}
+                  >
+                    <IconComp className="w-4 h-4" />
                   </button>
                 )
               })}
@@ -209,14 +248,14 @@ export function CreateKBModal() {
 
           <div className="border-t border-gray-100 pt-4">
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-sm font-medium text-gray-700">{t('createKb.embeddingModel')}</span>
+              <span className="text-sm font-medium text-gray-700">
+                {t('createKb.embeddingModel')}
+              </span>
               <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">
                 {t('createKb.lockedAfterCreate')}
               </span>
             </div>
-            <p className="text-xs text-gray-400 mb-3">
-              {t('createKb.embeddingDesc')}
-            </p>
+            <p className="text-xs text-gray-400 mb-3">{t('createKb.embeddingDesc')}</p>
             {(() => {
               const options: {
                 providerName: string

@@ -1,13 +1,13 @@
-import { app, net } from 'electron'
-import { join } from 'path'
 import { readFileSync } from 'fs'
+import { join } from 'path'
+import type { Chunk, Document, EmbeddingStatus } from '@shared/types'
 import Database from 'better-sqlite3'
-import { v4 as uuid } from 'uuid'
+import { net, app } from 'electron'
 import mammoth from 'mammoth'
-import type { Document, Chunk, EmbeddingStatus } from '@shared/types'
+import { v4 as uuid } from 'uuid'
 import { embeddingService } from './embedding-service'
+import { type MistralOcrConfig, pdfOcrService } from './pdf-ocr-service'
 import { VectorStore } from './vector-store'
-import { pdfOcrService, type MistralOcrConfig } from './pdf-ocr-service'
 
 const pdfParse = require('pdf-parse')
 
@@ -17,6 +17,21 @@ export interface DocEmbeddingStatus {
   done: number
   total: number
   error?: string
+}
+
+interface JinaReaderResponse {
+  code?: number | string
+  status?: number | string
+  data?: {
+    title?: string
+    content?: string
+    text?: string
+    url?: string
+  }
+  title?: string
+  content?: string
+  text?: string
+  url?: string
 }
 
 export class DocumentService {
@@ -77,7 +92,9 @@ export class DocumentService {
     const docIds = rows.map((r) => r.id)
     const placeholders = docIds.map(() => '?').join(',')
     const chunkRows = this.db
-      .prepare(`SELECT * FROM chunks WHERE doc_id IN (${placeholders}) ORDER BY doc_id, chunk_index`)
+      .prepare(
+        `SELECT * FROM chunks WHERE doc_id IN (${placeholders}) ORDER BY doc_id, chunk_index`
+      )
       .all(...docIds) as any[]
     const chunksByDoc = new Map<string, any[]>()
     for (const cr of chunkRows) {
@@ -103,28 +120,45 @@ export class DocumentService {
       const buffer = readFileSync(filePath)
       const result = await mammoth.extractRawText({ buffer })
       text = result.value
-      title = filePath.split('/').pop()?.replace(/\.docx$/i, '') || 'Untitled'
+      title =
+        filePath
+          .split('/')
+          .pop()
+          ?.replace(/\.docx$/i, '') || 'Untitled'
     } else if (sourceType === 'txt') {
       text = readFileSync(filePath, 'utf-8')
-      title = filePath.split('/').pop()?.replace(/\.txt$/i, '') || 'Untitled'
+      title =
+        filePath
+          .split('/')
+          .pop()
+          ?.replace(/\.txt$/i, '') || 'Untitled'
     } else if (sourceType === 'md') {
       text = readFileSync(filePath, 'utf-8')
-      title = filePath.split('/').pop()?.replace(/\.(md|markdown)$/i, '') || 'Untitled'
+      title =
+        filePath
+          .split('/')
+          .pop()
+          ?.replace(/\.(md|markdown)$/i, '') || 'Untitled'
     } else {
       const useOcr = !!options?.mistralOcr?.apiKey
       if (useOcr) {
-        text = await pdfOcrService.convertPdfToMarkdown(
-          filePath,
-          options!.mistralOcr!,
-          onProgress
-        )
-        title = filePath.split('/').pop()?.replace(/\.pdf$/i, '') || 'Untitled'
+        text = await pdfOcrService.convertPdfToMarkdown(filePath, options!.mistralOcr!, onProgress)
+        title =
+          filePath
+            .split('/')
+            .pop()
+            ?.replace(/\.pdf$/i, '') || 'Untitled'
       } else {
         const buffer = readFileSync(filePath)
         const data = await pdfParse(buffer)
         text = data.text
         title =
-          data.info?.Title || filePath.split('/').pop()?.replace(/\.pdf$/i, '') || 'Untitled'
+          data.info?.Title ||
+          filePath
+            .split('/')
+            .pop()
+            ?.replace(/\.pdf$/i, '') ||
+          'Untitled'
       }
     }
 
@@ -152,7 +186,9 @@ export class DocumentService {
     }
 
     this.db
-      .prepare('UPDATE knowledge_bases SET document_count = document_count + 1, updated_at = ? WHERE id = ?')
+      .prepare(
+        'UPDATE knowledge_bases SET document_count = document_count + 1, updated_at = ? WHERE id = ?'
+      )
       .run(now, kbId)
 
     onProgress?.(100, 100, 'Done')
@@ -165,39 +201,53 @@ export class DocumentService {
     url: string,
     onProgress?: (current: number, total: number, status: string) => void
   ): Promise<Document> {
-    onProgress?.(0, 100, 'Fetching URL...')
+    onProgress?.(0, 100, '正在通过 Jina Reader 获取网页...')
 
-    const TurndownService = require('turndown')
-    const turndown = new TurndownService()
+    let title = ''
+    let text = ''
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15000)
-
-    let response: Response
     try {
-      response = await net.fetch(url, {
-        signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RAG-KB/1.0)' }
-      })
-    } catch (e: any) {
-      clearTimeout(timeout)
-      if (e.name === 'AbortError') {
-        throw new Error('请求超时，无法获取网页内容')
+      const jinaResult = await this.fetchViaJinaReader(url)
+      if (jinaResult) {
+        title = jinaResult.title
+        text = jinaResult.content
       }
-      throw new Error(`无法获取网页: ${e.message}`)
+    } catch {
+      // Jina Reader errored (network/timeout/non-200); fall through to direct fetch
     }
-    clearTimeout(timeout)
 
-    const html = await response.text()
-    const text = turndown.turndown(html)
+    if (!text || text.length < 20) {
+      onProgress?.(30, 100, 'Jina Reader 不可用，尝试直接抓取...')
+      try {
+        const localResult = await this.fetchViaDirectHttp(url)
+        if (localResult) {
+          title = localResult.title
+          text = localResult.content
+        }
+      } catch {
+        // Both paths failed; throw the unified error below
+      }
+    }
 
-    const title = url.split('/').pop()?.replace(/\.\w+$/, '') || url
+    if (!text || text.length < 20) {
+      throw new Error(
+        '无法获取网页内容（Jina Reader 与本地直连均失败）。可能原因：网络问题、网站反爬虫机制、或 JavaScript 动态渲染页面。'
+      )
+    }
 
-    onProgress?.(50, 100, 'Chunking...')
+    if (!title) {
+      title = this.deriveTitleFromUrl(url)
+    }
+
+    onProgress?.(50, 100, '正在分片...')
     const { chunkSize, chunkOverlap } = this.getKbChunkConfig(kbId)
     const chunks = this.chunkText(text, chunkSize, chunkOverlap)
 
-    onProgress?.(80, 100, 'Saving...')
+    if (chunks.length === 0) {
+      throw new Error('网页内容分片失败：未生成有效分片')
+    }
+
+    onProgress?.(80, 100, '正在保存...')
 
     const now = new Date().toISOString()
     const docId = uuid()
@@ -217,12 +267,138 @@ export class DocumentService {
     }
 
     this.db
-      .prepare('UPDATE knowledge_bases SET document_count = document_count + 1, updated_at = ? WHERE id = ?')
+      .prepare(
+        'UPDATE knowledge_bases SET document_count = document_count + 1, updated_at = ? WHERE id = ?'
+      )
       .run(now, kbId)
 
     onProgress?.(100, 100, 'Done')
 
     return this.get(docId)!
+  }
+
+  private async fetchViaJinaReader(
+    url: string
+  ): Promise<{ title: string; content: string } | null> {
+    const response = await net.fetch(`https://r.jina.ai/${url}`, {
+      signal: AbortSignal.timeout(30000),
+      headers: {
+        Accept: 'application/json',
+        'X-Retain-Images': 'none'
+      }
+    })
+
+    if (!response.ok) {
+      return null
+    }
+
+    const payload: JinaReaderResponse = await response.json()
+    const data = payload.data || payload
+    const content = (data.content || data.text || '').trim()
+    const jinaTitle = (data.title || '').trim()
+
+    if (!content || content.length < 20) {
+      return null
+    }
+
+    return { title: jinaTitle, content }
+  }
+
+  private async fetchViaDirectHttp(
+    url: string
+  ): Promise<{ title: string; content: string } | null> {
+    const TurndownService = require('turndown')
+    const turndown = new TurndownService({
+      headingStyle: 'atx',
+      codeBlockStyle: 'fenced',
+      bulletListMarker: '-'
+    })
+
+    const response = await net.fetch(url, {
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+      }
+    })
+
+    if (!response.ok) {
+      return null
+    }
+
+    const html = await response.text()
+    const { title, contentHtml } = this.extractWebContent(html, url)
+    const localText = turndown.turndown(contentHtml).trim()
+
+    if (!localText || localText.length < 20) {
+      return null
+    }
+
+    return { title, content: localText }
+  }
+
+  private deriveTitleFromUrl(url: string): string {
+    try {
+      const parsed = new URL(url)
+      const lastSegment = parsed.pathname.split('/').filter(Boolean).pop()
+      if (lastSegment) {
+        return decodeURIComponent(lastSegment).replace(/\.\w+$/, '')
+      }
+      return parsed.hostname
+    } catch {
+      return url.split('/').pop()?.replace(/\.\w+$/, '') || url
+    }
+  }
+
+  private extractWebContent(
+    html: string,
+    fallbackUrl: string
+  ): {
+    title: string
+    contentHtml: string
+  } {
+    let title =
+      fallbackUrl
+        .split('/')
+        .pop()
+        ?.replace(/\.\w+$/, '') || fallbackUrl
+    const ogTitleMatch = html.match(
+      /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i
+    )
+    if (ogTitleMatch?.[1]?.trim()) {
+      title = ogTitleMatch[1].trim()
+    } else {
+      const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i)
+      if (titleMatch?.[1]?.trim()) {
+        title = titleMatch[1].trim()
+      }
+    }
+
+    // Strip non-content elements (scripts, styles, boilerplate nav/header/footer, etc.)
+    const cleaned = html
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
+      .replace(/<template[\s\S]*?<\/template>/gi, '')
+      .replace(/<svg[\s\S]*?<\/svg>/gi, '')
+      .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+      .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+      .replace(/<header[\s\S]*?<\/header>/gi, '')
+      .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+      .replace(/<aside[\s\S]*?<\/aside>/gi, '')
+      .replace(/<form[\s\S]*?<\/form>/gi, '')
+
+    // Prefer semantic main/article content; fall back to body, then full cleaned HTML
+    const mainMatch =
+      cleaned.match(/<main[^>]*>[\s\S]*?<\/main>/i) ||
+      cleaned.match(/<article[^>]*>[\s\S]*?<\/article>/i) ||
+      cleaned.match(/<body[^>]*>[\s\S]*?<\/body>/i)
+    const contentHtml = mainMatch ? mainMatch[0] : cleaned
+
+    return { title, contentHtml }
   }
 
   async delete(docId: string): Promise<boolean> {
@@ -253,10 +429,21 @@ export class DocumentService {
     return this.rowToDoc(row, chunks)
   }
 
+  rename(docId: string, title: string): Document {
+    const trimmed = title.trim()
+    if (!trimmed) {
+      throw new Error('文档名称不能为空')
+    }
+    this.db.prepare('UPDATE documents SET title = ? WHERE id = ?').run(trimmed, docId)
+    return this.get(docId)!
+  }
+
   getChunks(docId: string): Chunk[] {
-    return (this.db
-      .prepare('SELECT * FROM chunks WHERE doc_id = ? ORDER BY chunk_index')
-      .all(docId) as any[]).map((r) => ({
+    return (
+      this.db
+        .prepare('SELECT * FROM chunks WHERE doc_id = ? ORDER BY chunk_index')
+        .all(docId) as any[]
+    ).map((r) => ({
       id: r.id,
       docId: r.doc_id,
       content: r.content,
@@ -268,14 +455,16 @@ export class DocumentService {
   }
 
   getAllChunks(kbId: string): Chunk[] {
-    return (this.db
-      .prepare(
-        `SELECT c.* FROM chunks c
+    return (
+      this.db
+        .prepare(
+          `SELECT c.* FROM chunks c
        JOIN documents d ON c.doc_id = d.id
        WHERE d.kb_id = ?
        ORDER BY d.created_at, c.chunk_index`
-      )
-      .all(kbId) as any[]).map((r) => ({
+        )
+        .all(kbId) as any[]
+    ).map((r) => ({
       id: r.id,
       docId: r.doc_id,
       content: r.content,

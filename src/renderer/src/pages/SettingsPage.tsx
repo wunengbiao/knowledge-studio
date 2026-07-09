@@ -790,6 +790,7 @@ export function SettingsPage() {
         prompt: value.prompt,
         providerId: value.providerId ?? undefined,
         modelId: value.modelId ?? undefined,
+        contextCount: value.contextCount,
         modelParams: value.modelParams,
         knowledgeBaseIds: value.knowledgeBaseIds
       }

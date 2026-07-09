@@ -11,8 +11,9 @@ import {
   Stethoscope
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { useTranslation, type TranslationKey } from '../i18n'
 import { CreateKBModal } from '../components/CreateKBModal'
+import { getKbIcon } from '../components/kb-icon'
+import { type TranslationKey, useTranslation } from '../i18n'
 import { useKBStore } from '../stores/kb-store'
 
 const categoryConfig: Record<
@@ -121,7 +122,7 @@ export function HomePage() {
           <div className="grid grid-cols-2 gap-3">
             {knowledgeBases.map((kb) => {
               const config = categoryConfig[kb.category]
-              const Icon = config.icon
+              const Icon = getKbIcon(kb)
               return (
                 <button
                   key={kb.id}

@@ -6,7 +6,11 @@ import type {
   AssistantModelParams,
   CustomParamEntry
 } from '@shared/types'
-import { DEFAULT_ASSISTANT_MODEL_PARAMS, DEFAULT_ASSISTANT_PROMPT } from '@shared/types'
+import {
+  DEFAULT_ASSISTANT_CONTEXT_COUNT,
+  DEFAULT_ASSISTANT_MODEL_PARAMS,
+  DEFAULT_ASSISTANT_PROMPT
+} from '@shared/types'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { v4 as uuid } from 'uuid'
@@ -19,6 +23,7 @@ interface AssistantRow {
   provider_id: string | null
   model_id: string | null
   rerank_model_ref: string | null
+  context_count: number
   temperature_enabled: number
   temperature: number | null
   top_p_enabled: number
@@ -42,6 +47,7 @@ export type CreateAssistantParams = {
   readonly providerId?: string | null
   readonly modelId?: string | null
   readonly rerankModelRef?: ActiveModelRef | null
+  readonly contextCount?: number
   readonly modelParams?: Partial<AssistantModelParams>
   readonly knowledgeBaseIds?: readonly string[]
 }
@@ -53,6 +59,7 @@ export type UpdateAssistantParams = Partial<{
   readonly providerId: string | null
   readonly modelId: string | null
   readonly rerankModelRef: ActiveModelRef | null
+  readonly contextCount: number
   readonly modelParams: Partial<AssistantModelParams>
   readonly knowledgeBaseIds: readonly string[]
 }>
@@ -80,6 +87,7 @@ export class AssistantService {
         provider_id TEXT,
         model_id TEXT,
         rerank_model_ref TEXT,
+        context_count INTEGER NOT NULL DEFAULT 12,
         temperature_enabled INTEGER NOT NULL DEFAULT 1,
         temperature REAL,
         top_p_enabled INTEGER NOT NULL DEFAULT 0,
@@ -100,6 +108,9 @@ export class AssistantService {
     }
     if (!columns.some((column) => column.name === 'rerank_model_ref')) {
       this.db.exec('ALTER TABLE assistants ADD COLUMN rerank_model_ref TEXT')
+    }
+    if (!columns.some((column) => column.name === 'context_count')) {
+      this.db.exec('ALTER TABLE assistants ADD COLUMN context_count INTEGER NOT NULL DEFAULT 12')
     }
   }
 
@@ -141,9 +152,9 @@ export class AssistantService {
       .prepare(
         `INSERT INTO assistants (
           id, name, description, prompt, provider_id, model_id, rerank_model_ref,
-          temperature_enabled, temperature, top_p_enabled, top_p,
+          context_count, temperature_enabled, temperature, top_p_enabled, top_p,
           max_tokens_enabled, max_tokens, kb_ids, custom_params, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -153,6 +164,7 @@ export class AssistantService {
         params.providerId ?? null,
         params.modelId ?? null,
         params.rerankModelRef ? JSON.stringify(params.rerankModelRef) : null,
+        params.contextCount ?? DEFAULT_ASSISTANT_CONTEXT_COUNT,
         modelParams.temperatureEnabled ? 1 : 0,
         modelParams.temperature ?? null,
         modelParams.topPEnabled ? 1 : 0,
@@ -180,7 +192,7 @@ export class AssistantService {
       .prepare(
         `UPDATE assistants SET
           name = ?, description = ?, prompt = ?, provider_id = ?, model_id = ?, rerank_model_ref = ?,
-          temperature_enabled = ?, temperature = ?, top_p_enabled = ?, top_p = ?,
+          context_count = ?, temperature_enabled = ?, temperature = ?, top_p_enabled = ?, top_p = ?,
           max_tokens_enabled = ?, max_tokens = ?, kb_ids = ?, custom_params = ?, updated_at = ?
         WHERE id = ?`
       )
@@ -197,6 +209,7 @@ export class AssistantService {
           : updates.rerankModelRef
             ? JSON.stringify(updates.rerankModelRef)
             : null,
+        updates.contextCount === undefined ? current.contextCount : updates.contextCount,
         nextModelParams.temperatureEnabled ? 1 : 0,
         nextModelParams.temperature ?? null,
         nextModelParams.topPEnabled ? 1 : 0,
@@ -280,6 +293,7 @@ export class AssistantService {
       providerId: row.provider_id ?? undefined,
       modelId: row.model_id ?? undefined,
       rerankModelRef: this.parseRerankModelRef(row.rerank_model_ref),
+      contextCount: row.context_count,
       modelParams: {
         temperatureEnabled: row.temperature_enabled === 1,
         temperature: row.temperature ?? undefined,

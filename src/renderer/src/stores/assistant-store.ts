@@ -11,6 +11,7 @@ type AssistantCreate = {
   readonly providerId?: string | null
   readonly modelId?: string | null
   readonly rerankModelRef?: ActiveModelRef | null
+  readonly contextCount?: number
   readonly modelParams?: Partial<Assistant['modelParams']>
   readonly knowledgeBaseIds?: string[]
 }

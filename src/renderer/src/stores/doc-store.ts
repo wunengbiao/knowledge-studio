@@ -1,5 +1,5 @@
-import { create } from 'zustand'
 import type { Document, SearchResult } from '@shared/types'
+import { create } from 'zustand'
 import { translate } from '../i18n'
 import { useKBStore } from './kb-store'
 
@@ -28,8 +28,13 @@ interface DocState {
   uploadFile: (kbId: string, sourceType: 'docx' | 'pdf' | 'text') => Promise<void>
   importUrl: (kbId: string, url: string) => Promise<void>
   deleteDocument: (docId: string) => Promise<void>
+  renameDocument: (docId: string, title: string) => Promise<void>
   retryEmbedding: (docId: string) => Promise<void>
-  search: (kbId: string, query: string, mode: 'bm25' | 'vector' | 'hybrid' | 'graph') => Promise<void>
+  search: (
+    kbId: string,
+    query: string,
+    mode: 'bm25' | 'vector' | 'hybrid' | 'graph'
+  ) => Promise<void>
   setSearchQuery: (query: string) => void
   setSearchMode: (mode: 'bm25' | 'vector' | 'hybrid' | 'graph') => void
   clearSearch: () => void
@@ -130,6 +135,13 @@ export const useDocStore = create<DocState>((set, get) => ({
     await window.electronAPI.invoke('doc:delete', { docId })
     set((s) => ({ documents: s.documents.filter((d) => d.id !== docId) }))
     useKBStore.getState().loadKnowledgeBases()
+  },
+
+  renameDocument: async (docId, title) => {
+    const doc = await window.electronAPI.invoke('doc:rename', { docId, title })
+    set((s) => ({
+      documents: s.documents.map((d) => (d.id === docId ? doc : d))
+    }))
   },
 
   retryEmbedding: async (docId) => {

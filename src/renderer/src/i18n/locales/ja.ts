@@ -146,6 +146,10 @@ const ja: Record<keyof typeof zh, string> = {
   'kbPage.notSpecifiedNoRerank': '未指定（ReRank を使用しない）',
   'kbPage.noRerankCapability': 'いずれのプロバイダーでも ReRank 機能が有効化されていません。',
   'kbPage.saveFailed': '保存に失敗しました',
+  'kbPage.icon': 'アイコン',
+  'kbPage.iconAuto': 'カテゴリに従う',
+  'kbPage.docNamePlaceholder': 'ドキュメント名を入力...',
+  'kbPage.renameFailed': '名前変更に失敗しました',
 
   // Search page
   'searchPage.modeHybrid': 'ハイブリッド検索',
@@ -203,6 +207,8 @@ const ja: Record<keyof typeof zh, string> = {
     'いずれのプロバイダーでも Embedding 機能が有効化されていません。',
   'createKb.embeddingProviderNotFound': 'Embedding プロバイダーが存在しません',
   'createKb.createFailed': '作成に失敗しました',
+  'createKb.icon': 'アイコン',
+  'createKb.iconDesc': '任意、未選択の場合はカテゴリに従います',
 
   // Settings page
   'settings.title': '設定',
@@ -345,6 +351,8 @@ const ja: Record<keyof typeof zh, string> = {
   'assistant.rerankModel': 'ReRank モデル',
   'assistant.useDefaultRerankModel': 'デフォルトの ReRank モデルを使用',
   'assistant.noRerankCapability': 'いずれのプロバイダーでも ReRank 機能が有効化されていません。',
+  'assistant.contextCount': 'コンテキスト数',
+  'assistant.contextCountHint': '毎回モデルに送信する過去メッセージの数。0 = 履歴を送信しない。',
   'assistant.defaultKb': 'デフォルトナレッジベース',
   'assistant.defaultKbHint':
     '手動で @ 選択されていない場合、メッセージ送信時にこれらのナレッジベースが使用されます。',

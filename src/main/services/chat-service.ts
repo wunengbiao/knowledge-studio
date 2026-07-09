@@ -82,7 +82,8 @@ export interface StreamEmitter {
     assistantMessageId: string,
     content: string,
     reasoning: string,
-    createdAt: string
+    createdAt: string,
+    citations: MessageCitation[]
   ) => void
   onError: (assistantMessageId: string, error: string) => void
 }
@@ -569,7 +570,8 @@ export class ChatService {
       currentAssistantMessageId: assistantId,
       userMessage,
       userImages,
-      modelSupportsImage: endpoint.supportsImage
+      modelSupportsImage: endpoint.supportsImage,
+      contextCount: assistant.contextCount
     })
 
     const controller = new AbortController()
@@ -582,6 +584,7 @@ export class ChatService {
     const partialContent: string[] = []
     const partialReasoning: string[] = []
     const accumulatedContexts: SearchResult[] = []
+    let finalCitations: MessageCitation[] = []
     const tools = hasKb ? [knowledgeSearchToolSchema] : undefined
     let workingMessages: ChatCompletionMessage[] = initialMessages
 
@@ -646,7 +649,7 @@ export class ChatService {
             }
           }
 
-          const citations: MessageCitation[] = accumulatedContexts.map((c, i) => ({
+          finalCitations = accumulatedContexts.map((c, i) => ({
             index: i + 1,
             chunkId: c.chunkId,
             docId: c.docId,
@@ -656,7 +659,7 @@ export class ChatService {
           }))
           this.db
             .prepare('UPDATE messages SET citations = ? WHERE id = ?')
-            .run(JSON.stringify(citations), assistantId)
+            .run(JSON.stringify(finalCitations), assistantId)
 
           continue
         }
@@ -671,7 +674,7 @@ export class ChatService {
           .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
           .run(now, conversationId)
 
-        emitter?.onDone(assistantId, fullContent, fullReasoning, now)
+        emitter?.onDone(assistantId, fullContent, fullReasoning, now, finalCitations)
         return
       }
     } catch (e) {
@@ -686,7 +689,7 @@ export class ChatService {
         this.db
           .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
           .run(now, conversationId)
-        emitter?.onDone(assistantId, content, reasoning, now)
+        emitter?.onDone(assistantId, content, reasoning, now, finalCitations)
         return
       }
       if (reason === 'timeout') {
@@ -720,6 +723,7 @@ export class ChatService {
     }
     if (tools && tools.length > 0) {
       body.tools = tools
+      body.tool_choice = 'auto'
     }
 
     let response: Response
@@ -749,7 +753,11 @@ export class ChatService {
     if (!reader) throw new Error('LLM 响应体不可读')
 
     const decoder = new TextDecoder()
-    return this.readStream(reader, decoder, onDelta, onReasoning)
+    try {
+      return await this.readStream(reader, decoder, onDelta, onReasoning)
+    } finally {
+      reader.releaseLock()
+    }
   }
 
   abortStream(assistantMessageId: string): boolean {
@@ -856,7 +864,7 @@ export class ChatService {
     const toolCallAccumulator = new Map<number, ChatCompletionToolCall>()
     let leftover = ''
 
-    while (true) {
+    streamLoop: while (true) {
       const { done, value } = await reader.read()
       if (done) break
 
@@ -870,7 +878,7 @@ export class ChatService {
         const trimmed = line.trim()
         if (!trimmed || !trimmed.startsWith('data: ')) continue
         const data = trimmed.slice(6).trim()
-        if (data === '[DONE]') continue
+        if (data === '[DONE]') break streamLoop
         try {
           const json: ChatCompletionDelta = JSON.parse(data)
           const delta = json.choices?.[0]?.delta
@@ -899,7 +907,9 @@ export class ChatService {
                 })
               } else {
                 if (tc.id) existing.id = tc.id
-                if (tc.function?.name) existing.function.name += tc.function.name
+                if (tc.function?.name && !existing.function.name) {
+                  existing.function.name = tc.function.name
+                }
                 if (tc.function?.arguments) existing.function.arguments += tc.function.arguments
               }
             }
@@ -989,7 +999,7 @@ export class ChatService {
     if (!hasKb) return basePrompt
     return `${basePrompt}
 
-当前对话绑定了知识库。若用户问题需要查阅资料，请调用 \`knowledge_search\` 工具检索，工具返回的资料会以 [1] [2] 编号呈现；回答时使用对应编号标注引用。若用户消息是闲聊、格式化指令或对上文的操作，则不需要调用工具。`
+当前对话绑定了知识库。当用户提出事实性问题、需要查阅资料或询问具体信息时，你必须先调用 \`knowledge_search\` 工具检索知识库，再根据检索结果回答。工具返回的资料会以 [1] [2] 编号呈现，回答时使用对应编号标注引用来源。仅在以下情况不调用工具：纯闲聊问候、格式化指令（翻译、改写、总结上文、画图等）、与知识库完全无关的通用常识问题。`
   }
 
   private rowToConversation(row: ConversationRow): Conversation {

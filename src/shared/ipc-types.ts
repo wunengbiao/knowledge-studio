@@ -22,6 +22,7 @@ export interface IpcChannels {
       name: string
       description: string
       category: KnowledgeBase['category']
+      icon?: string | null
       embeddingApiUrl: string
       embeddingApiKey: string
       embeddingModel: string
@@ -43,6 +44,7 @@ export interface IpcChannels {
   'doc:import-url': { request: { kbId: string; url: string }; response: Document }
   'doc:delete': { request: { docId: string }; response: boolean }
   'doc:get': { request: { docId: string }; response: Document | null }
+  'doc:rename': { request: { docId: string; title: string }; response: Document }
 
   // Search
   'search:query': {
@@ -120,6 +122,7 @@ export interface IpcChannels {
       providerId?: string | null
       modelId?: string | null
       rerankModelRef?: ActiveModelRef | null
+      contextCount?: number
       modelParams?: Partial<Assistant['modelParams']>
       knowledgeBaseIds?: string[]
     }
@@ -212,7 +215,13 @@ export interface IpcChannels {
   }
   'chat:stream-done': {
     request: undefined
-    response: { assistantMessageId: string; content: string; reasoning: string; createdAt: string }
+    response: {
+      assistantMessageId: string
+      content: string
+      reasoning: string
+      createdAt: string
+      citations: MessageCitation[]
+    }
   }
   'chat:abort': {
     request: { assistantMessageId: string }

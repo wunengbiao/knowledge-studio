@@ -146,6 +146,10 @@ const en: Record<keyof typeof zh, string> = {
   'kbPage.notSpecifiedNoRerank': 'Not specified (no ReRank)',
   'kbPage.noRerankCapability': 'No provider has the ReRank capability enabled yet.',
   'kbPage.saveFailed': 'Save failed',
+  'kbPage.icon': 'Icon',
+  'kbPage.iconAuto': 'Follow category',
+  'kbPage.docNamePlaceholder': 'Enter document name...',
+  'kbPage.renameFailed': 'Rename failed',
 
   // Search page
   'searchPage.modeHybrid': 'Hybrid',
@@ -203,6 +207,8 @@ const en: Record<keyof typeof zh, string> = {
   'createKb.noEmbeddingCapability': 'No provider has the Embedding capability enabled yet.',
   'createKb.embeddingProviderNotFound': 'Embedding provider not found',
   'createKb.createFailed': 'Creation failed',
+  'createKb.icon': 'Icon',
+  'createKb.iconDesc': 'Optional; follows KB category if not set',
 
   // Settings page
   'settings.title': 'Settings',
@@ -347,6 +353,9 @@ const en: Record<keyof typeof zh, string> = {
   'assistant.rerankModel': 'ReRank Model',
   'assistant.useDefaultRerankModel': 'Use default rerank model',
   'assistant.noRerankCapability': 'No provider has the ReRank capability enabled yet.',
+  'assistant.contextCount': 'Context Count',
+  'assistant.contextCountHint':
+    'Number of past messages sent to the model each turn. 0 means no history.',
   'assistant.defaultKb': 'Default Knowledge Bases',
   'assistant.defaultKbHint':
     'When no KB is manually @-selected, these knowledge bases are used when sending messages.',

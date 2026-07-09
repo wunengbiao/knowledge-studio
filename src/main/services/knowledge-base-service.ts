@@ -49,6 +49,9 @@ export class KnowledgeBaseService {
     if (!colNames.includes('rerank_model_ref')) {
       this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN rerank_model_ref TEXT')
     }
+    if (!colNames.includes('icon')) {
+      this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN icon TEXT')
+    }
   }
 
   list(): KnowledgeBase[] {
@@ -62,6 +65,7 @@ export class KnowledgeBaseService {
     name: string
     description: string
     category: KnowledgeBase['category']
+    icon?: string | null
     embeddingApiUrl: string
     embeddingApiKey: string
     embeddingModel: string
@@ -74,16 +78,18 @@ export class KnowledgeBaseService {
     const chunkSize = params.chunkSize ?? 500
     const chunkOverlap = params.chunkOverlap ?? 50
     const rerankRef = params.rerankModelRef ? JSON.stringify(params.rerankModelRef) : null
+    const icon = params.icon ?? null
     this.db
       .prepare(
-        `INSERT INTO knowledge_bases (id, name, description, category, embedding_model, embedding_api_url, embedding_api_key, chunk_size, chunk_overlap, rerank_model_ref, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO knowledge_bases (id, name, description, category, icon, embedding_model, embedding_api_url, embedding_api_key, chunk_size, chunk_overlap, rerank_model_ref, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         params.name,
         params.description,
         params.category,
+        icon,
         params.embeddingModel,
         params.embeddingApiUrl,
         params.embeddingApiKey,
@@ -158,6 +164,7 @@ export class KnowledgeBaseService {
       name: row.name,
       description: row.description,
       category: row.category,
+      icon: row.icon ?? null,
       embeddingModel: row.embedding_model,
       embeddingApiUrl: row.embedding_api_url,
       embeddingApiKey: row.embedding_api_key,

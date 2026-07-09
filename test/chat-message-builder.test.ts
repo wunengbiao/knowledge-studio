@@ -20,6 +20,7 @@ test('Given failed empty assistant history, When building chat messages, Then om
     ],
     currentUserMessageId: 'user-current',
     currentAssistantMessageId: 'assistant-current',
+    contextCount: 12,
     userMessage: 'retry'
   })
 
@@ -39,6 +40,7 @@ test('Given current assistant placeholder, When building chat messages, Then omi
     ],
     currentUserMessageId: 'user-current',
     currentAssistantMessageId: 'assistant-current',
+    contextCount: 12,
     userMessage: 'next question'
   })
 
@@ -58,6 +60,7 @@ test('Given persisted current user message, When building chat messages, Then om
     ],
     currentUserMessageId: 'user-current',
     currentAssistantMessageId: 'assistant-current',
+    contextCount: 12,
     userMessage: 'current question'
   })
 
@@ -78,6 +81,7 @@ test('Given more than twelve sendable history messages, When building chat messa
     history,
     currentUserMessageId: 'user-current',
     currentAssistantMessageId: 'assistant-current',
+    contextCount: 12,
     userMessage: 'latest'
   })
 
@@ -87,12 +91,34 @@ test('Given more than twelve sendable history messages, When building chat messa
   assert.deepEqual(messages[13], { role: 'user', content: 'latest' })
 })
 
+test('Given contextCount zero, When building chat messages, Then omit all history', () => {
+  const history = [
+    baseMessage({ id: 'user-1', role: 'user', content: 'old message' }),
+    baseMessage({ id: 'assistant-1', role: 'assistant', content: 'old answer' })
+  ]
+
+  const messages = buildChatCompletionMessages({
+    systemPrompt: 'system',
+    history,
+    currentUserMessageId: 'user-current',
+    currentAssistantMessageId: 'assistant-current',
+    contextCount: 0,
+    userMessage: 'fresh start'
+  })
+
+  assert.deepEqual(messages, [
+    { role: 'system', content: 'system' },
+    { role: 'user', content: 'fresh start' }
+  ])
+})
+
 test('Given Mistral-compatible text chat, When building messages, Then emit only role and content fields', () => {
   const messages = buildChatCompletionMessages({
     systemPrompt: 'system',
     history: [baseMessage({ id: 'assistant-valid', role: 'assistant', content: 'answer' })],
     currentUserMessageId: 'user-current',
     currentAssistantMessageId: 'assistant-current',
+    contextCount: 12,
     userMessage: 'question'
   })
 

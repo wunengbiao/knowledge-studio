@@ -7,7 +7,11 @@ import type {
   CustomParamType,
   KnowledgeBase
 } from '@shared/types'
-import { DEFAULT_ASSISTANT_MODEL_PARAMS, DEFAULT_ASSISTANT_PROMPT } from '@shared/types'
+import {
+  DEFAULT_ASSISTANT_CONTEXT_COUNT,
+  DEFAULT_ASSISTANT_MODEL_PARAMS,
+  DEFAULT_ASSISTANT_PROMPT
+} from '@shared/types'
 import { useTranslation } from '../../i18n'
 import {
   Bot,
@@ -32,6 +36,7 @@ export type AssistantFormValue = {
   readonly providerId: string | null
   readonly modelId: string | null
   readonly rerankModelRef: ActiveModelRef | null
+  readonly contextCount: number
   readonly modelParams: AssistantModelParams
   readonly knowledgeBaseIds: string[]
 }
@@ -64,6 +69,7 @@ function initialForm(assistant: Assistant | null, defaultName: string): Assistan
     providerId: assistant?.providerId ?? null,
     modelId: assistant?.modelId ?? null,
     rerankModelRef: assistant?.rerankModelRef ?? null,
+    contextCount: assistant?.contextCount ?? DEFAULT_ASSISTANT_CONTEXT_COUNT,
     modelParams: assistant?.modelParams ?? DEFAULT_ASSISTANT_MODEL_PARAMS,
     knowledgeBaseIds: assistant?.knowledgeBaseIds ?? []
   }
@@ -387,6 +393,28 @@ export function AssistantSettingsPanel({
                 onValueChange={(value) => updateModelParam('maxTokens', Math.round(value))}
               />
             </div>
+
+            <label className="block rounded-xl border border-gray-200 p-3 bg-white">
+              <span className="block text-xs font-medium text-gray-500">
+                {t('assistant.contextCount')}
+              </span>
+              <input
+                type="number"
+                value={form.contextCount}
+                min={0}
+                step={1}
+                onChange={(event) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    contextCount: Math.max(0, Math.floor(Number(event.target.value) || 0))
+                  }))
+                }
+                className="mt-2 w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+              />
+              <span className="mt-1 block text-[11px] text-gray-400">
+                {t('assistant.contextCountHint')}
+              </span>
+            </label>
 
             <CustomParametersEditor
               entries={form.modelParams.customParameters}

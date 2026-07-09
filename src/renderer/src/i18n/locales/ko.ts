@@ -143,6 +143,10 @@ const ko: Record<keyof typeof zh, string> = {
   'kbPage.notSpecifiedNoRerank': '미지정 (ReRank 미사용)',
   'kbPage.noRerankCapability': '어떤 프로바이더에서도 ReRank 기능이 활성화되지 않았습니다.',
   'kbPage.saveFailed': '저장 실패',
+  'kbPage.icon': '아이콘',
+  'kbPage.iconAuto': '카테고리 따르기',
+  'kbPage.docNamePlaceholder': '문서 이름 입력...',
+  'kbPage.renameFailed': '이름 변경 실패',
 
   // Search page
   'searchPage.modeHybrid': '하이브리드 검색',
@@ -199,6 +203,8 @@ const ko: Record<keyof typeof zh, string> = {
   'createKb.noEmbeddingCapability': '어떤 프로바이더에서도 Embedding 기능이 활성화되지 않았습니다.',
   'createKb.embeddingProviderNotFound': 'Embedding 프로바이더가 존재하지 않습니다',
   'createKb.createFailed': '생성 실패',
+  'createKb.icon': '아이콘',
+  'createKb.iconDesc': '선택 사항, 미선택 시 카테고리를 따릅니다',
 
   // Settings page
   'settings.title': '설정',
@@ -339,6 +345,8 @@ const ko: Record<keyof typeof zh, string> = {
   'assistant.rerankModel': 'ReRank 모델',
   'assistant.useDefaultRerankModel': '기본 ReRank 모델 사용',
   'assistant.noRerankCapability': '어떤 프로바이더에서도 ReRank 기능이 활성화되지 않았습니다.',
+  'assistant.contextCount': '컨텍스트 수',
+  'assistant.contextCountHint': '매번 모델에 전송할 과거 메시지 수. 0은 기록 전송 안 함.',
   'assistant.defaultKb': '기본 지식 베이스',
   'assistant.defaultKbHint':
     '수동으로 @ 선택하지 않은 경우 메시지 전송 시 이 지식 베이스들이 사용됩니다.',

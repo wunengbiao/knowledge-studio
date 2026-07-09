@@ -1,18 +1,11 @@
-import type { KnowledgeBase } from '@shared/types'
 import {
-  BookOpen,
-  BrainCircuit,
-  FolderOpen,
-  Globe,
   Library,
   MessageSquare,
   Moon,
   PanelLeftClose,
   Plus,
-  Scale,
   Search,
   Settings,
-  Stethoscope,
   Sun,
   Trash2
 } from 'lucide-react'
@@ -21,15 +14,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from '../../i18n'
 import { useChatStore } from '../../stores/chat-store'
 import { useKBStore } from '../../stores/kb-store'
-
-const categoryIcons: Record<KnowledgeBase['category'], typeof Library> = {
-  general: BookOpen,
-  technical: BrainCircuit,
-  research: Globe,
-  legal: Scale,
-  medical: Stethoscope,
-  custom: FolderOpen
-}
+import { getKbIcon } from '../kb-icon'
 
 const categoryKeys = {
   general: 'category.general',
@@ -188,7 +173,7 @@ export function Sidebar({ hidden, onHide }: { hidden: boolean; onHide: () => voi
           </span>
         </div>
         {knowledgeBases.map((kb) => {
-          const Icon = categoryIcons[kb.category]
+          const Icon = getKbIcon(kb)
           const isActive =
             location.pathname.includes(kb.id) && !location.pathname.startsWith('/chat')
           return (

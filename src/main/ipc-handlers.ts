@@ -108,6 +108,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('doc:get', async (_e, { docId }) => docService.get(docId))
 
+  ipcMain.handle('doc:rename', async (_e, { docId, title }) => docService.rename(docId, title))
+
   // ─── Search ───────────────────────────────────────────
   ipcMain.handle('search:query', async (_e, { kbId, query, mode, topK }) => {
     const win = BrowserWindow.getAllWindows()[0]
@@ -256,12 +258,13 @@ export function registerIpcHandlers(): void {
         onReasoning: (assistantMessageId, delta) => {
           win?.webContents.send('chat:stream-reasoning', { assistantMessageId, delta })
         },
-        onDone: (assistantMessageId, content, reasoning, createdAt) => {
+        onDone: (assistantMessageId, content, reasoning, createdAt, citations) => {
           win?.webContents.send('chat:stream-done', {
             assistantMessageId,
             content,
             reasoning,
-            createdAt
+            createdAt,
+            citations
           })
         },
         onError: (assistantMessageId, error) => {
@@ -296,12 +299,13 @@ export function registerIpcHandlers(): void {
           onReasoning: (assistantMessageId, delta) => {
             win?.webContents.send('chat:stream-reasoning', { assistantMessageId, delta })
           },
-          onDone: (assistantMessageId, content2, reasoning, createdAt) => {
+          onDone: (assistantMessageId, content2, reasoning, createdAt, citations) => {
             win?.webContents.send('chat:stream-done', {
               assistantMessageId,
               content: content2,
               reasoning,
-              createdAt
+              createdAt,
+              citations
             })
           },
           onError: (assistantMessageId, error) => {
@@ -331,12 +335,13 @@ export function registerIpcHandlers(): void {
         onReasoning: (id, delta) => {
           win?.webContents.send('chat:stream-reasoning', { assistantMessageId: id, delta })
         },
-        onDone: (id, content, reasoning, createdAt) => {
+        onDone: (id, content, reasoning, createdAt, citations) => {
           win?.webContents.send('chat:stream-done', {
             assistantMessageId: id,
             content,
             reasoning,
-            createdAt
+            createdAt,
+            citations
           })
         },
         onError: (id, error) => {

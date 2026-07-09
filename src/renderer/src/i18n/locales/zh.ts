@@ -138,6 +138,10 @@ const zh = {
   'kbPage.notSpecifiedNoRerank': '未指定（不使用 ReRank）',
   'kbPage.noRerankCapability': '尚未在任一提供商中勾选 ReRank 能力。',
   'kbPage.saveFailed': '保存失败',
+  'kbPage.icon': '图标',
+  'kbPage.iconAuto': '跟随类型',
+  'kbPage.docNamePlaceholder': '输入文档名称...',
+  'kbPage.renameFailed': '重命名失败',
 
   // Search page
   'searchPage.modeHybrid': '混合检索',
@@ -194,6 +198,8 @@ const zh = {
   'createKb.noEmbeddingCapability': '尚未在任一提供商中勾选 Embedding 能力。',
   'createKb.embeddingProviderNotFound': 'Embedding 提供商不存在',
   'createKb.createFailed': '创建失败',
+  'createKb.icon': '图标',
+  'createKb.iconDesc': '可选，不选则跟随知识库类型',
 
   // Settings page
   'settings.title': '设置',
@@ -326,6 +332,8 @@ const zh = {
   'assistant.rerankModel': 'ReRank 模型',
   'assistant.useDefaultRerankModel': '使用默认 ReRank 模型',
   'assistant.noRerankCapability': '尚未在任一提供商中勾选 ReRank 能力。',
+  'assistant.contextCount': '上下文数量',
+  'assistant.contextCountHint': '每次对话携带给模型的历史消息条数，0 表示不携带历史上下文。',
   'assistant.defaultKb': '默认知识库',
   'assistant.defaultKbHint': '未手动 @ 选择时，发送消息会使用这些知识库。',
   'assistant.selected': '已选 {n}',

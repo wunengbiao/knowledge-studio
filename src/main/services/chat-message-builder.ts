@@ -54,20 +54,17 @@ export function buildChatCompletionMessages(params: {
   userMessage: string
   userImages?: MessageImage[]
   modelSupportsImage: boolean
+  contextCount: number
 }): ChatCompletionMessage[] {
-  const recentHistory = params.history
-    .filter((message) =>
-      isSendableHistoryMessage(
-        message,
-        params.currentUserMessageId,
-        params.currentAssistantMessageId
-      )
-    )
-    .slice(-12)
-    .map((message) => ({
-      role: message.role,
-      content: messageToContent(message, params.modelSupportsImage)
-    }))
+  const filteredHistory = params.history.filter((message) =>
+    isSendableHistoryMessage(message, params.currentUserMessageId, params.currentAssistantMessageId)
+  )
+  const recentHistory = (
+    params.contextCount <= 0 ? [] : filteredHistory.slice(-params.contextCount)
+  ).map((message) => ({
+    role: message.role,
+    content: messageToContent(message, params.modelSupportsImage)
+  }))
 
   const currentUserContent: string | ChatCompletionContentPart[] =
     params.modelSupportsImage && params.userImages && params.userImages.length > 0

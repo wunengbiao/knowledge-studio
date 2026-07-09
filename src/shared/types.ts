@@ -3,6 +3,7 @@ export interface KnowledgeBase {
   name: string
   description: string
   category: 'general' | 'technical' | 'research' | 'legal' | 'medical' | 'custom'
+  icon?: string | null
   embeddingModel: string
   embeddingApiUrl: string
   embeddingApiKey: string
@@ -99,6 +100,7 @@ export interface Assistant {
   providerId?: string
   modelId?: string
   rerankModelRef?: ActiveModelRef | null
+  contextCount: number
   modelParams: AssistantModelParams
   knowledgeBaseIds: string[]
   createdAt: string
@@ -116,6 +118,8 @@ export const DEFAULT_ASSISTANT_MODEL_PARAMS: AssistantModelParams = {
   maxTokens: 2048,
   customParameters: []
 }
+
+export const DEFAULT_ASSISTANT_CONTEXT_COUNT = 12
 
 export interface Conversation {
   id: string
