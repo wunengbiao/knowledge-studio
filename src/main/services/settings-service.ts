@@ -1,14 +1,15 @@
-import { app } from 'electron'
-import { join } from 'path'
-import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
+import { join } from 'path'
 import type {
   ActiveModelRef,
   AppSettings,
   Provider,
   ProviderKind,
-  ProviderModel
+  ProviderModel,
+  ProviderModelCapabilities
 } from '@shared/types'
+import Database from 'better-sqlite3'
+import { app } from 'electron'
 import { ProxyService } from './proxy-service'
 
 const BUILTIN_PROVIDERS: Provider[] = [
@@ -20,8 +21,16 @@ const BUILTIN_PROVIDERS: Provider[] = [
     apiKey: '',
     apiHost: 'https://api.deepseek.com/v1',
     models: [
-      { id: 'deepseek-chat', capabilities: { chat: true, embedding: false, rerank: false } },
-      { id: 'deepseek-reasoner', capabilities: { chat: true, embedding: false, rerank: false } }
+      {
+        id: 'deepseek-chat',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
+      },
+      {
+        id: 'deepseek-reasoner',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
+      }
     ]
   },
   {
@@ -34,7 +43,8 @@ const BUILTIN_PROVIDERS: Provider[] = [
     models: [
       {
         id: 'meta/llama-3.1-70b-instruct',
-        capabilities: { chat: true, embedding: false, rerank: false }
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
       },
       {
         id: 'nvidia/nv-embedqa-e5-v5',
@@ -54,9 +64,20 @@ const BUILTIN_PROVIDERS: Provider[] = [
     apiKey: '',
     apiHost: 'https://api.mistral.ai/v1',
     models: [
-      { id: 'mistral-small-latest', capabilities: { chat: true, embedding: false, rerank: false } },
-      { id: 'mistral-large-latest', capabilities: { chat: true, embedding: false, rerank: false } },
-      { id: 'mistral-embed', capabilities: { chat: false, embedding: true, rerank: false } }
+      {
+        id: 'mistral-small-latest',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
+      },
+      {
+        id: 'mistral-large-latest',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
+      },
+      {
+        id: 'mistral-embed',
+        capabilities: { chat: false, embedding: true, rerank: false }
+      }
     ]
   },
   {
@@ -67,8 +88,16 @@ const BUILTIN_PROVIDERS: Provider[] = [
     apiKey: '',
     apiHost: 'https://generativelanguage.googleapis.com/v1beta',
     models: [
-      { id: 'gemini-2.0-flash', capabilities: { chat: true, embedding: false, rerank: false } },
-      { id: 'gemini-2.5-pro', capabilities: { chat: true, embedding: false, rerank: false } },
+      {
+        id: 'gemini-2.0-flash',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: true }
+      },
+      {
+        id: 'gemini-2.5-pro',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: true }
+      },
       {
         id: 'gemini-embedding-1',
         capabilities: { chat: false, embedding: true, rerank: false }
@@ -116,7 +145,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   mistralApiKey: '',
   mistralApiUrl: 'https://api.mistral.ai/v1/ocr',
   mistralOcrModel: 'mistral-ocr-latest',
-  userAvatar: ''
+  userAvatar: '',
+  codeBlockWordWrap: false,
+  codeBlockShowLineNumbers: true,
+  codeTheme: 'monokai',
+  codeFont: 'system',
+  codeFontSize: 'md',
+  language: 'zh',
+  theme: 'light'
 }
 
 export function resolveCapabilityUrl(
@@ -138,9 +174,7 @@ function lookupActiveModel(
   if (!ref) return null
   const provider = s.providers.find((p) => p.id === ref.providerId)
   if (!provider) return null
-  const model = provider.models.find(
-    (m) => m.id === ref.modelId && m.capabilities[capability]
-  )
+  const model = provider.models.find((m) => m.id === ref.modelId && m.capabilities[capability])
   if (!model) return null
   return { provider, model }
 }
@@ -187,7 +221,11 @@ function reshapeOldProvider(p: Provider & Record<string, unknown>): Provider {
   const embModel = String(p.embeddingModel ?? '')
   const rerModel = String(p.rerankModel ?? '')
   if (llmModel) {
-    models.push({ id: llmModel, capabilities: { chat: true, embedding: false, rerank: false } })
+    models.push({
+      id: llmModel,
+      capabilities: { chat: true, embedding: false, rerank: false },
+      inputs: { text: true, image: false }
+    })
   }
   if (embModel) {
     const existing = models.find((m) => m.id === embModel)
@@ -222,6 +260,24 @@ function reshapeOldProvider(p: Provider & Record<string, unknown>): Provider {
   }
 }
 
+function normalizeProviderModels(provider: Provider): Provider {
+  return {
+    ...provider,
+    models: provider.models.map((m) => {
+      const legacy = m.capabilities as ProviderModelCapabilities & { image?: boolean }
+      const capabilities: ProviderModelCapabilities = {
+        chat: !!legacy.chat,
+        embedding: !!legacy.embedding,
+        rerank: !!legacy.rerank
+      }
+      const inputs = capabilities.chat
+        ? { text: m.inputs?.text ?? true, image: m.inputs?.image ?? !!legacy.image }
+        : undefined
+      return { ...m, capabilities, inputs }
+    })
+  }
+}
+
 function migrateProvidersShape(s: AppSettings): AppSettings {
   if (!s.providers || s.providers.length === 0) {
     const providers = [...BUILTIN_PROVIDERS.map((p) => ({ ...p })), makeCustomProvider()]
@@ -236,9 +292,9 @@ function migrateProvidersShape(s: AppSettings): AppSettings {
       llmPresets: undefined
     }
   }
-  const reshaped = s.providers.map((p) =>
-    reshapeOldProvider(p as Provider & Record<string, unknown>)
-  )
+  const reshaped = s.providers
+    .map((p) => reshapeOldProvider(p as Provider & Record<string, unknown>))
+    .map(normalizeProviderModels)
   const oldShape = s as AppSettings & {
     activeLlmProviderId?: string
     activeEmbeddingProviderId?: string

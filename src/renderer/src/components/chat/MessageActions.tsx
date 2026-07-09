@@ -1,3 +1,4 @@
+import { useTranslation } from '../../i18n'
 import { Check, Copy, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -18,6 +19,7 @@ export function MessageActions({
   onDelete,
   onRegenerate
 }: MessageActionsProps) {
+  const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
 
   const handleCopy = () => {
@@ -35,7 +37,7 @@ export function MessageActions({
       {role === 'assistant' && (
         <button
           type="button"
-          aria-label="重新生成"
+          aria-label={t('messageActions.regenerate')}
           disabled={disabled}
           onClick={onRegenerate}
           className="w-7 h-7 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -43,20 +45,18 @@ export function MessageActions({
           <RefreshCw className="w-3.5 h-3.5" />
         </button>
       )}
-      {role === 'user' && (
-        <button
-          type="button"
-          aria-label="编辑"
-          disabled={disabled}
-          onClick={onEdit}
-          className="w-7 h-7 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          <Pencil className="w-3.5 h-3.5" />
-        </button>
-      )}
       <button
         type="button"
-        aria-label={copied ? '已复制' : '复制'}
+        aria-label={t('messageActions.edit')}
+        disabled={disabled}
+        onClick={onEdit}
+        className="w-7 h-7 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        <Pencil className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        aria-label={copied ? t('messageActions.copied') : t('messageActions.copy')}
         disabled={disabled}
         onClick={handleCopy}
         className="w-7 h-7 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -69,7 +69,7 @@ export function MessageActions({
       </button>
       <button
         type="button"
-        aria-label="删除"
+        aria-label={t('messageActions.delete')}
         disabled={disabled}
         onClick={onDelete}
         className="w-7 h-7 flex items-center justify-center rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"

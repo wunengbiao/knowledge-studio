@@ -1,13 +1,87 @@
-import type { Message, MessageCitation } from '@shared/types'
-import { AlertCircle, Bot, FileText, Loader2, Send, User, X } from 'lucide-react'
+import type { Message, MessageCitation, MessageImage } from '@shared/types'
+import {
+  AlertCircle,
+  Bot,
+  FileText,
+  Image as ImageIcon,
+  Loader2,
+  Paperclip,
+  Send,
+  Square,
+  User,
+  X
+} from 'lucide-react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { MessageActions } from '../components/chat/MessageActions'
 import { ThinkingBlock } from '../components/chat/ThinkingBlock'
 import { CitationTooltip, MessageMarkdown } from '../components/chat/markdown'
+import { type TranslationKey, useTranslation } from '../i18n'
 import { useAssistantStore } from '../stores/assistant-store'
 import { useChatStore } from '../stores/chat-store'
 import { useKBStore } from '../stores/kb-store'
+
+function placeCaretAtEnd(el: HTMLElement): void {
+  el.focus()
+  const sel = window.getSelection()
+  if (!sel) return
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  range.collapse(false)
+  sel.removeAllRanges()
+  sel.addRange(range)
+}
+
+function getCaretOffset(el: HTMLElement): number {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return 0
+  const range = sel.getRangeAt(0)
+  const preRange = range.cloneRange()
+  preRange.selectNodeContents(el)
+  preRange.setEnd(range.endContainer, range.endOffset)
+  return preRange.toString().length
+}
+
+function readFileAsMessageImage(file: File): Promise<MessageImage> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result as string
+      const img = new window.Image()
+      img.onload = () => {
+        const maxDim = 1024
+        let { width, height } = img
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height)
+          width = Math.round(width * scale)
+          height = Math.round(height * scale)
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          resolve({
+            dataUrl,
+            mimeType: file.type,
+            name: file.name,
+            width: img.width,
+            height: img.height
+          })
+          return
+        }
+        ctx.drawImage(img, 0, 0, width, height)
+        const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+        const resized = canvas.toDataURL(mimeType, 0.85)
+        resolve({ dataUrl: resized, mimeType, name: file.name, width, height })
+      }
+      img.onerror = () => resolve({ dataUrl, mimeType: file.type, name: file.name })
+      img.src = dataUrl
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
 
 export function ChatPage() {
   const { id } = useParams<{ id: string }>()
@@ -20,16 +94,17 @@ export function ChatPage() {
     error,
     selectConversation,
     sendMessage,
-    subscribeProgress,
     clearError,
     createConversation,
     clearCurrentConversation,
     deleteMessage,
     editMessage,
-    regenerateMessage
+    updateMessageContent,
+    regenerateMessage,
+    abortStream
   } = useChatStore()
   const { assistants, loadAssistants } = useAssistantStore()
-  const { knowledgeBases, loadKnowledgeBases } = useKBStore()
+  const { knowledgeBases, loadKnowledgeBases, settings } = useKBStore()
   const [input, setInput] = useState('')
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([])
   const [kbPickerOpen, setKbPickerOpen] = useState(false)
@@ -41,8 +116,15 @@ export function ChatPage() {
   } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
+  const [attachedImages, setAttachedImages] = useState<MessageImage[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const editableRef = useRef<HTMLDivElement>(null)
+  const chipsRef = useRef<HTMLDivElement>(null)
+  const isComposingRef = useRef(false)
+  const [isComposing, setIsComposing] = useState(false)
+  const [chipsWidth, setChipsWidth] = useState(0)
+  const { t } = useTranslation()
 
   const currentConversation = conversations.find((c) => c.id === currentConversationId)
   const currentConversationKbIds = currentConversation?.kbIds ?? []
@@ -53,13 +135,35 @@ export function ChatPage() {
   const isStreamingCurrent = Object.values(streams).some(
     (s) => s.conversationId === currentConversationId
   )
+  const streamingMessageId = useMemo(() => {
+    const entry = Object.entries(streams).find(
+      ([, s]) => s.conversationId === currentConversationId
+    )
+    return entry?.[0] ?? null
+  }, [streams, currentConversationId])
+
+  const modelSupportsImage = useMemo(() => {
+    if (!settings || !currentAssistant) return false
+    const provider = settings.providers.find((p) => p.id === currentAssistant.providerId)
+    const model = provider?.models.find((m) => m.id === currentAssistant.modelId)
+    return !!model?.inputs?.image
+  }, [settings, currentAssistant])
+
+  const toggleKb = useCallback((kbId: string) => {
+    setSelectedKbIds((prev) =>
+      prev.includes(kbId) ? prev.filter((id) => id !== kbId) : [...prev, kbId]
+    )
+  }, [])
+
+  const selectedKbs = useMemo(
+    () => knowledgeBases.filter((k) => selectedKbIds.includes(k.id)),
+    [knowledgeBases, selectedKbIds]
+  )
 
   useEffect(() => {
     loadKnowledgeBases()
     loadAssistants()
-    const cleanup = subscribeProgress()
-    return cleanup
-  }, [loadAssistants, loadKnowledgeBases, subscribeProgress])
+  }, [loadAssistants, loadKnowledgeBases])
 
   useEffect(() => {
     if (id) {
@@ -79,30 +183,65 @@ export function ChatPage() {
     }
   }, [currentAssistant, currentConversationKbIds])
 
+  // 无依赖 effect：流式响应期间每次渲染都跟进滚动到底部；编辑消息时跳过，避免被编辑的消息被滚出视口
   useEffect(() => {
+    if (editingId) return
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   })
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: chip presence drives the conditional render that mounts/unmounts chipsRef.current
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
+    if (!chipsRef.current) {
+      setChipsWidth(0)
+      return
     }
-  })
+    const updateWidth = () => {
+      if (chipsRef.current) setChipsWidth(chipsRef.current.offsetWidth)
+    }
+    updateWidth()
+    const ro = new ResizeObserver(updateWidth)
+    ro.observe(chipsRef.current)
+    return () => ro.disconnect()
+  }, [selectedKbs, attachedImages])
+
+  // Keep the editable's ZWSP sentinel in sync when chips change while input is empty
+  // (e.g. user removes the last chip via its X button without typing).
+  useEffect(() => {
+    const el = editableRef.current
+    if (!el || input !== '') return
+    const hasChips = selectedKbIds.length > 0 || attachedImages.length > 0
+    const hasZwsp = el.textContent.includes('\u200B')
+    if (hasChips && !hasZwsp) {
+      el.textContent = '\u200B'
+    } else if (!hasChips && hasZwsp) {
+      el.textContent = ''
+    }
+  }, [input, selectedKbIds, attachedImages])
 
   const handleSend = async () => {
     const trimmed = input.trim()
-    if (!trimmed || isStreamingCurrent) return
+    const images = attachedImages
+    if ((!trimmed && images.length === 0) || isStreamingCurrent) return
     setInput('')
+    setAttachedImages([])
+    if (editableRef.current) {
+      editableRef.current.textContent =
+        selectedKbIds.length > 0 || images.length > 0 ? '\u200B' : ''
+    }
 
     if (!currentConversationId) {
       const newId = await createConversation(selectedKbIds, undefined, currentAssistant?.id)
       navigate(`/chat/${newId}`, { replace: true })
     }
 
-    await sendMessage(trimmed, selectedKbIds, undefined, currentAssistant?.id)
+    await sendMessage(trimmed, selectedKbIds, undefined, currentAssistant?.id, images)
+  }
+
+  const handleAbort = async () => {
+    if (!streamingMessageId) return
+    await abortStream(streamingMessageId)
   }
 
   const handleStartEdit = useCallback((msg: Message) => {
@@ -124,11 +263,16 @@ export function ChatPage() {
       if (!currentId) return null
       const trimmed = editContent.trim()
       if (!trimmed) return currentId
-      void editMessage(currentId, trimmed)
+      const target = conversationMessages.find((m) => m.id === currentId)
+      if (target?.role === 'assistant') {
+        void updateMessageContent(currentId, trimmed)
+      } else {
+        void editMessage(currentId, trimmed, target?.images)
+      }
       return null
     })
     setEditContent('')
-  }, [editContent, editMessage])
+  }, [conversationMessages, editContent, editMessage, updateMessageContent])
 
   const handleCopy = useCallback((msg: Message) => {
     void navigator.clipboard.writeText(msg.content)
@@ -148,14 +292,6 @@ export function ChatPage() {
     [regenerateMessage]
   )
 
-  const toggleKb = (kbId: string) => {
-    setSelectedKbIds((prev) =>
-      prev.includes(kbId) ? prev.filter((id) => id !== kbId) : [...prev, kbId]
-    )
-  }
-
-  const selectedKbs = knowledgeBases.filter((k) => selectedKbIds.includes(k.id))
-
   const filteredKbs = kbPickerOpen
     ? knowledgeBases.filter(
         (kb) =>
@@ -166,19 +302,41 @@ export function ChatPage() {
 
   const selectKbFromPicker = (kbId: string) => {
     setSelectedKbIds((prev) => (prev.includes(kbId) ? prev : [...prev, kbId]))
-    setInput((prev) => prev.replace(/(?:^|\s)@[^\s]*$/, '').trimEnd())
+    if (editableRef.current) {
+      const current = editableRef.current.innerText
+      const next = current
+        .replace(/(?:^|\s)@[^\s]*$/, '')
+        .replace(/\u200B/g, '')
+        .trimEnd()
+      // When empty, use zero-width space to establish a line box after the floated chips,
+      // so the caret lands on the first line (right of chips) instead of behind them.
+      editableRef.current.textContent = next === '' ? '\u200B' : next
+      setInput(next)
+    }
     setKbPickerOpen(false)
     setKbPickerQuery('')
     setHighlightedKbIndex(0)
-    requestAnimationFrame(() => textareaRef.current?.focus())
+    requestAnimationFrame(() => {
+      editableRef.current?.focus()
+      if (editableRef.current) placeCaretAtEnd(editableRef.current)
+    })
   }
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value
-    setInput(value)
-
-    const cursorPos = e.target.selectionStart ?? value.length
-    const textBeforeCursor = value.slice(0, cursorPos)
+  const syncFromEditable = (el: HTMLDivElement) => {
+    const initialText = el.innerText.replace(/\u200B/g, '')
+    if (initialText === '' && selectedKbIds.length > 0) {
+      if (!el.textContent.includes('\u200B')) {
+        el.textContent = '\u200B'
+        placeCaretAtEnd(el)
+      }
+    } else if (initialText === '' && el.textContent !== '') {
+      el.textContent = ''
+    }
+    const rawText = el.innerText
+    const text = rawText.replace(/\u200B/g, '')
+    setInput(text)
+    const caretOffset = getCaretOffset(el)
+    const textBeforeCursor = rawText.slice(0, caretOffset).replace(/\u200B/g, '')
     const match = textBeforeCursor.match(/(?:^|\s)@([^\s]*)$/)
     if (match) {
       setKbPickerOpen(true)
@@ -190,7 +348,38 @@ export function ChatPage() {
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleEditableInput = (e: React.FormEvent<HTMLDivElement>) => {
+    if (isComposingRef.current) return
+    syncFromEditable(e.currentTarget)
+  }
+
+  const handleCompositionStart = () => {
+    isComposingRef.current = true
+    setIsComposing(true)
+  }
+
+  const handleCompositionEnd = (e: React.CompositionEvent<HTMLDivElement>) => {
+    isComposingRef.current = false
+    setIsComposing(false)
+    syncFromEditable(e.currentTarget)
+  }
+
+  const handleEditablePaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const imageFiles = Array.from(e.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => !!file)
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      const images = await Promise.all(imageFiles.map(readFileAsMessageImage))
+      setAttachedImages((prev) => [...prev, ...images])
+      return
+    }
+    e.preventDefault()
+    document.execCommand('insertText', false, e.clipboardData.getData('text/plain'))
+  }
+
+  const handleEditableKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (kbPickerOpen && filteredKbs.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -213,16 +402,40 @@ export function ChatPage() {
         return
       }
     } else {
-      if (e.key === 'Backspace' && input === '' && selectedKbIds.length > 0) {
-        e.preventDefault()
-        setSelectedKbIds((prev) => prev.slice(0, -1))
-        return
+      if (e.key === 'Backspace' && input === '') {
+        if (attachedImages.length > 0) {
+          e.preventDefault()
+          setAttachedImages((prev) => prev.slice(0, -1))
+          return
+        }
+        if (selectedKbIds.length > 0) {
+          e.preventDefault()
+          setSelectedKbIds((prev) => prev.slice(0, -1))
+          return
+        }
       }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault()
-        handleSend()
+      if (e.key === 'Enter') {
+        if (e.shiftKey) {
+          e.preventDefault()
+          document.execCommand('insertText', false, '\n')
+        } else {
+          e.preventDefault()
+          void handleSend()
+        }
       }
     }
+  }
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith('image/'))
+    if (files.length === 0) return
+    const images = await Promise.all(files.map(readFileAsMessageImage))
+    setAttachedImages((prev) => [...prev, ...images])
+    e.target.value = ''
+  }
+
+  const removeImage = (idx: number) => {
+    setAttachedImages((prev) => prev.filter((_, i) => i !== idx))
   }
 
   return (
@@ -235,15 +448,15 @@ export function ChatPage() {
               <Bot className="w-12 h-12 mx-auto mb-3 opacity-30" />
               {selectedKbs.length === 0 ? (
                 <>
-                  <p className="text-sm text-gray-500">开始直接对话</p>
-                  <p className="text-xs mt-1">未选择知识库，将直接调用模型回复</p>
-                  <p className="text-xs mt-2 text-blue-500">输入 @ 可选择知识库进行检索</p>
+                  <p className="text-sm text-gray-500">{t('chat.startDirectChat')}</p>
+                  <p className="text-xs mt-1">{t('chat.noKbSelected')}</p>
+                  <p className="text-xs mt-2 text-blue-500">{t('chat.typeAtForKb')}</p>
                 </>
               ) : (
                 <>
-                  <p className="text-sm">开始与你的知识库对话</p>
+                  <p className="text-sm">{t('chat.startKbChat')}</p>
                   <p className="text-xs mt-1">
-                    已选择 {selectedKbs.length} 个知识库，提问将基于检索结果
+                    {t('chat.selectedKbsCount', { n: selectedKbs.length })}
                   </p>
                 </>
               )}
@@ -271,12 +484,12 @@ export function ChatPage() {
           {isStreamingCurrent &&
             conversationMessages[conversationMessages.length - 1]?.role !== 'assistant' && (
               <div className="msg-enter flex gap-3 ml-6">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shrink-0">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slate-600 to-slate-700 flex items-center justify-center shrink-0">
                   <Bot className="w-4 h-4 text-white" />
                 </div>
-                <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-2 text-sm text-gray-500">
+                <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  正在思考中...
+                  {t('chat.thinking')}
                 </div>
               </div>
             )}
@@ -298,13 +511,13 @@ export function ChatPage() {
       </div>
 
       {/* Input Area */}
-      <div className="border-t border-gray-200 bg-white p-4 no-drag">
+      <div className="p-4 no-drag">
         <div className="relative">
           {kbPickerOpen && (
-            <div className="absolute bottom-full left-2 mb-2 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-40 max-h-64 overflow-y-auto">
+            <div className="absolute bottom-full left-2 mb-2 w-72 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-lg z-40 max-h-64 overflow-y-auto">
               {filteredKbs.length === 0 ? (
-                <div className="px-3 py-4 text-center text-xs text-gray-400">
-                  {knowledgeBases.length === 0 ? '暂无知识库' : '无匹配知识库'}
+                <div className="px-3 py-4 text-center text-xs text-gray-400 dark:text-gray-500">
+                  {knowledgeBases.length === 0 ? t('chat.noKbs') : t('chat.noMatchingKbs')}
                 </div>
               ) : (
                 filteredKbs.map((kb, i) => (
@@ -316,14 +529,16 @@ export function ChatPage() {
                       selectKbFromPicker(kb.id)
                     }}
                     className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
-                      i === highlightedKbIndex ? 'bg-blue-50' : 'hover:bg-gray-50'
+                      i === highlightedKbIndex
+                        ? 'bg-blue-50 dark:bg-blue-950/50'
+                        : 'hover:bg-gray-50 dark:hover:bg-gray-800'
                     }`}
                   >
-                    <FileText className="w-4 h-4 text-gray-400 shrink-0" />
+                    <FileText className="w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <div className="text-gray-900 truncate">{kb.name}</div>
-                      <div className="text-[10px] text-gray-400 truncate">
-                        {kb.documentCount} 文档
+                      <div className="text-gray-900 dark:text-gray-100 truncate">{kb.name}</div>
+                      <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                        {t('chat.documentCount', { n: kb.documentCount })}
                       </div>
                     </div>
                   </button>
@@ -333,52 +548,114 @@ export function ChatPage() {
           )}
 
           <div className="flex items-end gap-2 border border-gray-200 rounded-2xl bg-white focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all p-2">
-            <div className="flex-1 flex flex-wrap items-center gap-1.5">
-              {selectedKbs.map((kb) => (
-                <span
-                  key={kb.id}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
-                >
-                  {kb.name}
-                  <button
-                    type="button"
-                    onClick={() => toggleKb(kb.id)}
-                    className="text-blue-400 hover:text-blue-600"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              ))}
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
+            <div className="flex-1 min-w-0 relative max-h-[200px] overflow-y-auto px-1 py-1">
+              {(selectedKbs.length > 0 || attachedImages.length > 0) && (
+                <div ref={chipsRef} className="flex items-center gap-1.5 float-left mr-2">
+                  {selectedKbs.map((kb) => (
+                    <span
+                      key={kb.id}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs leading-4 max-h-5"
+                    >
+                      {kb.name}
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          toggleKb(kb.id)
+                        }}
+                        className="text-blue-400 hover:text-blue-600"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  {attachedImages.map((img, idx) => (
+                    <span
+                      key={img.dataUrl}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-50 text-purple-700 rounded-full text-xs leading-4 max-h-5"
+                    >
+                      <ImageIcon className="w-3 h-3 shrink-0" />
+                      <span className="truncate max-w-[80px]">{img.name || 'image'}</span>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          removeImage(idx)
+                        }}
+                        className="text-purple-400 hover:text-purple-600"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div
+                ref={editableRef}
+                contentEditable={!isStreamingCurrent}
+                suppressContentEditableWarning
+                onInput={handleEditableInput}
+                onKeyDown={handleEditableKeyDown}
+                onPaste={handleEditablePaste}
+                onCompositionStart={handleCompositionStart}
+                onCompositionEnd={handleCompositionEnd}
                 onBlur={() => {
                   setTimeout(() => setKbPickerOpen(false), 150)
                 }}
-                placeholder={
-                  selectedKbs.length === 0
-                    ? '输入消息... 输入 @ 选择知识库 (Enter 发送，Shift+Enter 换行)'
-                    : '输入消息... (Enter 发送，Shift+Enter 换行)'
-                }
-                rows={1}
-                className="flex-1 resize-none outline-none px-2 py-1.5 text-sm placeholder-gray-400 max-h-[200px] min-w-[200px]"
+                className="block w-full outline-none text-sm leading-5 whitespace-pre-wrap break-words"
+                style={{ minHeight: '20px' }}
               />
+              {input === '' && !isComposing && (
+                <div
+                  className="absolute top-1 left-1 text-sm text-gray-400 pointer-events-none"
+                  style={{ paddingLeft: chipsWidth > 0 ? chipsWidth + 8 : 0 }}
+                >
+                  {selectedKbs.length === 0
+                    ? t('chat.placeholderNoKb')
+                    : t('chat.placeholderWithKb')}
+                </div>
+              )}
             </div>
             <button
               type="button"
-              onClick={handleSend}
-              disabled={!input.trim() || isStreamingCurrent}
-              className="w-9 h-9 flex items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0"
+              onClick={() => fileInputRef.current?.click()}
+              aria-label={t('chat.attachImage')}
+              className="w-9 h-9 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0"
+            >
+              <Paperclip className="w-4 h-4" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+            <button
+              type="button"
+              onClick={isStreamingCurrent ? handleAbort : handleSend}
+              disabled={!isStreamingCurrent && !input.trim() && attachedImages.length === 0}
+              aria-label={isStreamingCurrent ? t('chat.stop') : t('chat.send')}
+              className={
+                isStreamingCurrent
+                  ? 'stop-breathing w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 transition-colors shrink-0'
+                  : 'w-9 h-9 flex items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0'
+              }
             >
               {isStreamingCurrent ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Square className="w-3 h-3" fill="currentColor" stroke="none" />
               ) : (
                 <Send className="w-4 h-4" />
               )}
             </button>
           </div>
+          {attachedImages.length > 0 && !modelSupportsImage && (
+            <div className="mt-1.5 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 px-1">
+              <AlertCircle className="w-3 h-3 shrink-0" />
+              {t('chat.imageNotSupported')}
+            </div>
+          )}
         </div>
       </div>
 
@@ -387,7 +664,7 @@ export function ChatPage() {
         <>
           <button
             type="button"
-            aria-label="关闭引用详情"
+            aria-label={t('chat.closeCitation')}
             className="fixed inset-0 z-40 bg-black/20"
             onClick={() => setActiveCitation(null)}
           />
@@ -401,7 +678,7 @@ export function ChatPage() {
                   {activeCitation.citation.docTitle}
                 </div>
                 <div className="text-[11px] text-gray-400 mt-0.5">
-                  相关度 {(activeCitation.citation.score * 100).toFixed(1)}%
+                  {t('chat.relevance', { n: (activeCitation.citation.score * 100).toFixed(1) })}
                 </div>
               </div>
               <button
@@ -457,19 +734,56 @@ const MessageBubble = memo(function MessageBubble({
   const citationMap = useMemo(() => new Map(citations.map((c) => [c.index, c])), [citations])
   const isStreamingThis = msg.role === 'assistant' && msg.content === '' && !msg.reasoning
   const isReasoningStreaming = msg.role === 'assistant' && !!msg.reasoning && msg.content === ''
+  const { t } = useTranslation()
   const userAvatar = useKBStore((s) => s.settings?.userAvatar) ?? ''
-  const editTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const editTextareaRef = useRef<HTMLDivElement>(null)
+  const editComposingRef = useRef(false)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: editContent is read only on entering edit mode; subsequent edits flow DOM -> state, never back to DOM (would wipe caret)
   useEffect(() => {
-    if (isEditing && editTextareaRef.current) {
-      editTextareaRef.current.focus()
-    }
+    if (!isEditing || !editTextareaRef.current) return
+    const el = editTextareaRef.current
+    el.textContent = editContent
+    el.focus()
+    placeCaretAtEnd(el)
   }, [isEditing])
+
+  const handleEditInput = (e: React.FormEvent<HTMLDivElement>) => {
+    if (editComposingRef.current) return
+    onChangeEdit(e.currentTarget.innerText)
+  }
+
+  const handleEditCompositionStart = () => {
+    editComposingRef.current = true
+  }
+
+  const handleEditCompositionEnd = (e: React.CompositionEvent<HTMLDivElement>) => {
+    editComposingRef.current = false
+    onChangeEdit(e.currentTarget.innerText)
+  }
+
+  const handleEditPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    document.execCommand('insertText', false, e.clipboardData.getData('text/plain'))
+  }
+
+  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      onSaveEdit()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onCancelEdit()
+    } else if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault()
+      document.execCommand('insertText', false, '\n')
+    }
+  }
 
   const transformChildren = useCallback(
     (children: React.ReactNode) =>
-      renderCitationsInChildren(children, citationMap, msg.id, onCitationClick),
-    [citationMap, msg.id, onCitationClick]
+      renderCitationsInChildren(children, citationMap, msg.id, onCitationClick, t),
+    [citationMap, msg.id, onCitationClick, t]
   )
 
   return (
@@ -482,12 +796,12 @@ const MessageBubble = memo(function MessageBubble({
             ? userAvatar
               ? 'bg-gray-100'
               : 'bg-gradient-to-br from-blue-500 to-blue-600'
-            : 'bg-gradient-to-br from-purple-500 to-purple-600'
+            : 'bg-gradient-to-br from-slate-600 to-slate-700'
         }`}
       >
         {msg.role === 'user' ? (
           userAvatar ? (
-            <img src={userAvatar} alt="你" className="w-full h-full object-cover" />
+            <img src={userAvatar} alt={t('chat.you')} className="w-full h-full object-cover" />
           ) : (
             <User className="w-4 h-4 text-white" />
           )
@@ -501,50 +815,73 @@ const MessageBubble = memo(function MessageBubble({
         }`}
       >
         {isEditing ? (
-          <div className="w-[min(480px,100%)] rounded-2xl rounded-tr-sm bg-white border border-blue-400 px-4 py-2.5 shadow-sm">
-            <textarea
+          <div
+            className={`rounded-2xl bg-white border border-blue-400 px-4 py-2.5 max-w-full shadow-sm ${
+              msg.role === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'
+            }`}
+          >
+            <div
               ref={editTextareaRef}
-              value={editContent}
-              onChange={(e) => onChangeEdit(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  onSaveEdit()
-                } else if (e.key === 'Escape') {
-                  e.preventDefault()
-                  onCancelEdit()
-                }
-              }}
-              className="w-full resize-none outline-none px-2 py-1.5 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 min-h-[60px] text-gray-900"
+              contentEditable
+              suppressContentEditableWarning
+              onInput={handleEditInput}
+              onKeyDown={handleEditKeyDown}
+              onPaste={handleEditPaste}
+              onCompositionStart={handleEditCompositionStart}
+              onCompositionEnd={handleEditCompositionEnd}
+              className="outline-none text-[15px] leading-relaxed text-gray-900 whitespace-pre-wrap break-words"
+              style={{ minHeight: '24px' }}
             />
-            <div className="flex gap-2 justify-end mt-2">
-              <button
-                type="button"
-                onClick={onCancelEdit}
-                className="px-3 py-1 text-xs text-gray-600 hover:text-gray-900 rounded-md hover:bg-gray-100"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={onSaveEdit}
-                disabled={!editContent.trim() || sending}
-                className="px-3 py-1 text-xs text-white bg-blue-500 hover:bg-blue-600 rounded-md disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                保存
-              </button>
+            <div className="flex items-center justify-between mt-2 gap-2">
+              <span className="text-[11px] text-gray-400 dark:text-gray-500">
+                {t('chat.editHint')}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={onCancelEdit}
+                  className="px-3 py-1 text-xs text-gray-600 hover:text-gray-900 rounded-md hover:bg-gray-100"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="button"
+                  onClick={onSaveEdit}
+                  disabled={!editContent.trim() || sending}
+                  className="px-3 py-1 text-xs text-white bg-blue-500 hover:bg-blue-600 rounded-md disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {t('common.save')}
+                </button>
+              </div>
             </div>
           </div>
         ) : (
           <div
-            className={`rounded-2xl px-4 py-2.5 ${
+            className={`rounded-2xl px-4 py-2.5 max-w-full ${
               msg.role === 'user'
                 ? 'bg-blue-500 text-white rounded-tr-sm'
                 : 'bg-white border border-gray-200 text-gray-900 rounded-tl-sm shadow-sm'
             }`}
           >
             {msg.role === 'user' ? (
-              <div className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</div>
+              <>
+                {msg.images && msg.images.length > 0 && (
+                  <div className="flex items-start gap-1.5 mb-2 flex-wrap">
+                    <ImageIcon className="w-3.5 h-3.5 text-white/70 shrink-0 mt-0.5" />
+                    <div className="flex flex-wrap gap-1.5">
+                      {msg.images.map((img, idx) => (
+                        <img
+                          key={img.dataUrl}
+                          src={img.dataUrl}
+                          alt={img.name || `image ${idx + 1}`}
+                          className="w-24 h-24 object-cover rounded-lg border border-white/20"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <MessageMarkdown variant="user" content={msg.content} />
+              </>
             ) : (
               <>
                 {(msg.reasoning || isReasoningStreaming) && (
@@ -553,7 +890,9 @@ const MessageBubble = memo(function MessageBubble({
                 {isStreamingThis ? (
                   <div className="flex items-center gap-2 text-sm text-gray-500 py-1">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    {citations.length > 0 ? '正在检索并思考...' : '正在思考...'}
+                    {citations.length > 0
+                      ? t('chat.searchingAndThinking')
+                      : t('chat.thinkingShort')}
                   </div>
                 ) : (
                   <MessageMarkdown content={msg.content} transformChildren={transformChildren} />
@@ -563,7 +902,7 @@ const MessageBubble = memo(function MessageBubble({
                   <div className="mt-3 pt-3 border-t border-gray-100">
                     <div className="flex items-center gap-1.5 mb-1.5 text-[11px] text-gray-400">
                       <FileText className="w-3 h-3" />
-                      <span>引用来源 · {citations.length}</span>
+                      <span>{t('chat.citationSource', { n: citations.length })}</span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {citations.map((c) => (
@@ -606,7 +945,8 @@ function renderCitationsInChildren(
   children: React.ReactNode,
   citationMap: Map<number, MessageCitation>,
   messageId: string,
-  setActiveCitation: (v: { messageId: string; citation: MessageCitation } | null) => void
+  setActiveCitation: (v: { messageId: string; citation: MessageCitation } | null) => void,
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string
 ): React.ReactNode {
   const result: React.ReactNode[] = []
   let keyCounter = 0
@@ -630,7 +970,7 @@ function renderCitationsInChildren(
               <button
                 type="button"
                 onClick={() => setActiveCitation({ messageId, citation })}
-                aria-label={`引用 ${idx}: ${citation.docTitle}`}
+                aria-label={t('chat.citationN', { n: idx, title: citation.docTitle })}
                 className="inline-flex items-center justify-center align-super mx-0.5 min-w-[16px] h-[16px] px-[5px] rounded-full bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors"
               >
                 {idx}

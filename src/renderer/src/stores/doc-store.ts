@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Document, SearchResult } from '@shared/types'
+import { translate } from '../i18n'
 import { useKBStore } from './kb-store'
 
 let uploadSeq = 0
@@ -160,7 +161,7 @@ export const useDocStore = create<DocState>((set, get) => ({
         searchResults: [],
         searchQuery: query,
         searchMode: mode,
-        searchError: e?.message || '搜索失败'
+        searchError: e?.message || translate('error.searchFailed')
       })
     } finally {
       cleanup()

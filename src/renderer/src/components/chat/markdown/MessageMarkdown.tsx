@@ -2,11 +2,16 @@ import { type ReactNode, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
-import 'highlight.js/styles/github.css'
 import { useChatMarkdownComponents } from './useChatMarkdownComponents'
 
 interface MessageMarkdownProps {
   content: string
+  /**
+   * Visual variant: `assistant` (default) renders for dark-on-light
+   * assistant bubbles; `user` renders for the light-on-blue user bubble,
+   * remapping hardcoded gray text / borders to white-tinted equivalents.
+   */
+  variant?: 'user' | 'assistant'
   /** Optional inline transform applied to paragraph & list children (e.g. citation [n] injection). */
   transformChildren?: (children: ReactNode) => ReactNode
   className?: string
@@ -21,11 +26,19 @@ interface MessageMarkdownProps {
  * scaling / citation hook). Project-local: no streamdown / @cherrystudio/ui
  * dependency — uses the existing `react-markdown` stack.
  */
-function MessageMarkdownImpl({ content, transformChildren, className }: MessageMarkdownProps) {
-  const components = useChatMarkdownComponents({ transformChildren })
+function MessageMarkdownImpl({
+  content,
+  variant = 'assistant',
+  transformChildren,
+  className
+}: MessageMarkdownProps) {
+  const components = useChatMarkdownComponents({ transformChildren, variant })
+  const baseText = variant === 'user' ? 'text-white' : 'text-gray-900'
 
   return (
-    <div className={`chat-markdown text-sm text-gray-900 ${className ?? ''}`}>
+    <div
+      className={`chat-markdown overflow-hidden text-sm leading-relaxed ${baseText} ${className ?? ''}`}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}

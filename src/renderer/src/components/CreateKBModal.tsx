@@ -11,16 +11,17 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation, type TranslationKey } from '../i18n'
 import { useKBStore } from '../stores/kb-store'
 
-const categoryConfig: Record<KnowledgeBase['category'], { icon: typeof BookOpen; label: string }> =
+const categoryConfig: Record<KnowledgeBase['category'], { icon: typeof BookOpen; labelKey: TranslationKey }> =
   {
-    general: { icon: BookOpen, label: '通用' },
-    technical: { icon: BrainCircuit, label: '技术' },
-    research: { icon: Globe, label: '研究' },
-    legal: { icon: Scale, label: '法律' },
-    medical: { icon: Stethoscope, label: '医学' },
-    custom: { icon: FolderOpen, label: '自定义' }
+    general: { icon: BookOpen, labelKey: 'category.general' },
+    technical: { icon: BrainCircuit, labelKey: 'category.technical' },
+    research: { icon: Globe, labelKey: 'category.research' },
+    legal: { icon: Scale, labelKey: 'category.legal' },
+    medical: { icon: Stethoscope, labelKey: 'category.medical' },
+    custom: { icon: FolderOpen, labelKey: 'category.custom' }
   }
 
 const DEFAULT_CHUNK_SIZE = 500
@@ -28,6 +29,7 @@ const DEFAULT_CHUNK_OVERLAP = 50
 
 export function CreateKBModal() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const { createModalOpen, closeCreateModal, createKB, settings } = useKBStore()
 
   const [name, setName] = useState('')
@@ -76,7 +78,7 @@ export function CreateKBModal() {
       const modelId = rest.join('::')
       const provider = settings?.providers.find((p) => p.id === providerId)
       if (!provider) {
-        setError('Embedding 提供商不存在')
+        setError(t('createKb.embeddingProviderNotFound'))
         return
       }
       const apiUrl = `${provider.apiHost.replace(/\/+$/, '')}/embeddings`
@@ -93,7 +95,7 @@ export function CreateKBModal() {
       closeCreateModal()
       navigate(`/kb/${kb.id}`)
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : '创建失败'
+      const message = e instanceof Error ? e.message : t('createKb.createFailed')
       setError(message)
     } finally {
       setCreating(false)
@@ -116,17 +118,17 @@ export function CreateKBModal() {
           <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
             <Plus className="w-4 h-4 text-blue-600" />
           </div>
-          <h2 className="text-lg font-semibold text-gray-900">新建知识库</h2>
+          <h2 className="text-lg font-semibold text-gray-900">{t('createKb.title')}</h2>
         </div>
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">名称</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('createKb.name')}</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="输入知识库名称"
+              placeholder={t('createKb.enterKbName')}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               autoFocus
               onKeyDown={(e) => {
@@ -137,19 +139,19 @@ export function CreateKBModal() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              描述 <span className="text-gray-400 font-normal">（可选）</span>
+              {t('createKb.description')} <span className="text-gray-400 font-normal">{t('common.optional')}</span>
             </label>
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="简短描述"
+              placeholder={t('createKb.shortDesc')}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">类型</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">{t('createKb.category')}</label>
             <div className="grid grid-cols-3 gap-2">
               {(Object.keys(categoryConfig) as KnowledgeBase['category'][]).map((cat) => {
                 const cfg = categoryConfig[cat]
@@ -166,7 +168,7 @@ export function CreateKBModal() {
                     }`}
                   >
                     <Icon className="w-4 h-4" />
-                    {cfg.label}
+                    {t(cfg.labelKey)}
                   </button>
                 )
               })}
@@ -174,11 +176,11 @@ export function CreateKBModal() {
           </div>
 
           <div className="border-t border-gray-100 pt-4">
-            <div className="text-sm font-medium text-gray-700 mb-1">文档分块</div>
+            <div className="text-sm font-medium text-gray-700 mb-1">{t('createKb.chunking')}</div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">
-                  块大小 (字符)
+                  {t('createKb.chunkSize')}
                 </label>
                 <input
                   type="number"
@@ -192,7 +194,7 @@ export function CreateKBModal() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">
-                  重叠大小 (字符)
+                  {t('createKb.chunkOverlap')}
                 </label>
                 <input
                   type="number"
@@ -207,13 +209,13 @@ export function CreateKBModal() {
 
           <div className="border-t border-gray-100 pt-4">
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-sm font-medium text-gray-700">Embedding 模型</span>
+              <span className="text-sm font-medium text-gray-700">{t('createKb.embeddingModel')}</span>
               <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">
-                创建后不可修改
+                {t('createKb.lockedAfterCreate')}
               </span>
             </div>
             <p className="text-xs text-gray-400 mb-3">
-              选择提供 Embedding 能力的模型，配置在创建后锁定。
+              {t('createKb.embeddingDesc')}
             </p>
             {(() => {
               const options: {
@@ -237,7 +239,7 @@ export function CreateKBModal() {
                   onChange={(e) => setEmbeddingRef(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">未选择</option>
+                  <option value="">{t('createKb.notSelected')}</option>
                   {options.map((g) => (
                     <optgroup key={g.providerName} label={g.providerName}>
                       {g.models.map((m) => (
@@ -250,7 +252,7 @@ export function CreateKBModal() {
                 </select>
               ) : (
                 <div className="text-xs text-gray-400 px-1">
-                  尚未在任一提供商中勾选 Embedding 能力。
+                  {t('createKb.noEmbeddingCapability')}
                 </div>
               )
             })()}
@@ -270,7 +272,7 @@ export function CreateKBModal() {
             disabled={creating}
             className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -279,7 +281,7 @@ export function CreateKBModal() {
             className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             {creating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            创建
+            {t('common.create')}
           </button>
         </div>
       </div>

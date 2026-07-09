@@ -9,6 +9,7 @@ import type {
 import Database from 'better-sqlite3'
 import { net, app } from 'electron'
 import { embeddingService } from './embedding-service'
+import { GraphService } from './graph-service'
 import { SettingsService, resolveCapabilityUrl } from './settings-service'
 import { tokenize } from './tokenizer'
 import { VectorStore } from './vector-store'
@@ -25,6 +26,7 @@ interface ChunkRecord {
 export class SearchService {
   private db: Database.Database
   private settingsService = new SettingsService()
+  private graphService = new GraphService()
 
   constructor() {
     const dataDir = join(app.getPath('userData'), 'rag-data')
@@ -36,7 +38,8 @@ export class SearchService {
     query: string,
     mode: 'bm25' | 'vector' | 'hybrid' | 'graph',
     topK: number,
-    onProgress?: EmbeddingProgress
+    onProgress?: EmbeddingProgress,
+    rerankOverride?: ActiveModelRef | null
   ): Promise<SearchResult[]> {
     if (mode === 'bm25') {
       const chunks = this.getKbChunks(kbId)
@@ -55,9 +58,10 @@ export class SearchService {
       const vectorResults = await this.vectorSearch(kbId, query, topK * 2, onProgress)
       const merged = this.rrfMerge(bm25Results, vectorResults, topK)
       const kb = this.getKb(kbId)
-      if (kb?.rerankModelRef) {
+      const effectiveRerank = rerankOverride ?? kb?.rerankModelRef ?? null
+      if (effectiveRerank) {
         try {
-          return await this.rerankResults(query, merged, kb.rerankModelRef)
+          return await this.rerankResults(query, merged, effectiveRerank)
         } catch (e) {
           console.error('[search] rerank failed:', e)
         }
@@ -190,18 +194,16 @@ export class SearchService {
       throw new Error(`向量检索失败: ${e?.message || e}`)
     }
   }
-
   private async graphSearch(
     kbId: string,
     query: string,
     topK: number,
     onProgress?: EmbeddingProgress
   ): Promise<SearchResult[]> {
-    const entities = this.db
-      .prepare('SELECT * FROM graph_entities WHERE kb_id = ?')
-      .all(kbId) as any[]
-
-    if (entities.length === 0) {
+    const entityExists = this.db
+      .prepare('SELECT 1 AS has FROM graph_entities WHERE kb_id = ? LIMIT 1')
+      .get(kbId) as { has: number } | undefined
+    if (!entityExists) {
       const chunks = this.getKbChunks(kbId)
       return this.bm25Search(chunks, query, topK)
     }
@@ -211,28 +213,32 @@ export class SearchService {
       const chunks = this.getKbChunks(kbId)
       return this.bm25Search(chunks, query, topK)
     }
+
     const config = {
       embeddingApiUrl: kb.embeddingApiUrl,
       embeddingApiKey: kb.embeddingApiKey,
       embeddingModel: kb.embeddingModel
     }
 
-    onProgress?.(0, entities.length, '正在生成查询向量...')
+    onProgress?.(0, 1, '正在生成查询向量...')
     const queryEmbedding = await embeddingService.embed(query, config)
     if (!queryEmbedding) {
       throw new Error('Embedding 服务未返回结果')
     }
 
-    const entityEmbeddings = await embeddingService.embedBatch(
-      entities.map((e: any) => `${e.name}: ${e.description}`),
+    const entities = await this.graphService.ensureEntityEmbeddings(
+      kbId,
       config,
-      (current, total) => onProgress?.(current, total, `正在向量化实体 ${current}/${total}`)
+      queryEmbedding.length,
+      onProgress
     )
 
-    const entityScores = entities.map((entity: any, i: number) => ({
-      entity,
-      score: this.cosineSimilarity(queryEmbedding, entityEmbeddings[i] || [])
-    }))
+    const entityScores = entities
+      .filter((e) => e.embedding !== null)
+      .map((entity) => ({
+        entity,
+        score: this.cosineSimilarity(queryEmbedding, entity.embedding as number[])
+      }))
 
     entityScores.sort((a, b) => b.score - a.score)
     const topEntities = entityScores.slice(0, 5)

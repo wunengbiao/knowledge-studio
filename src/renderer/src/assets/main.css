@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
   --background: 0 0% 100%;
   --foreground: 240 10% 3.9%;
@@ -21,6 +23,28 @@
   --sidebar-foreground: 240 5.3% 26.1%;
   --sidebar-accent: 240 4.8% 95.9%;
   --sidebar-accent-foreground: 240 5.9% 10%;
+}
+
+[data-theme="dark"] {
+  --background: 222 47% 6%;
+  --foreground: 210 20% 92%;
+  --card: 222 40% 9%;
+  --card-foreground: 210 20% 92%;
+  --popover: 222 40% 9%;
+  --popover-foreground: 210 20% 92%;
+  --primary: 210 20% 92%;
+  --primary-foreground: 222 47% 6%;
+  --secondary: 222 30% 14%;
+  --secondary-foreground: 210 20% 92%;
+  --muted: 222 30% 13%;
+  --muted-foreground: 217 12% 60%;
+  --border: 222 25% 18%;
+  --input: 222 25% 18%;
+  --ring: 217 91% 60%;
+  --sidebar: 222 45% 8%;
+  --sidebar-foreground: 210 20% 75%;
+  --sidebar-accent: 222 30% 14%;
+  --sidebar-accent-foreground: 210 20% 92%;
 }
 
 * {
@@ -87,8 +111,524 @@ body {
   animation: msgEnter 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+@keyframes stopBreathing {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55);
+  }
+  50% {
+    transform: scale(1.12);
+    box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+  }
+}
+
+.stop-breathing {
+  animation: stopBreathing 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .msg-enter {
     animation: none;
   }
+  .stop-breathing {
+    animation: none;
+  }
+}
+
+/* Dark mode auto-mapping: applies dark surfaces/text/borders to common Tailwind
+   utilities when no explicit dark: variant exists. The :not([class*="dark:..."])
+   exclusion is critical - it preserves any element that already has an explicit
+   dark:bg-*, dark:text-*, etc. so those variants keep winning. Unlayered rules
+   beat Tailwind's layered utilities on specificity. Do not remove without
+   replacing with per-component dark: variants across ~30 files. */
+[data-theme="dark"] .bg-white:not([class*="dark:bg-"]) {
+  background-color: hsl(222 40% 9%);
+}
+[data-theme="dark"] .bg-gray-50:not([class*="dark:bg-"]) {
+  background-color: hsl(222 47% 6%);
+}
+[data-theme="dark"] .bg-gray-100:not([class*="dark:bg-"]) {
+  background-color: hsl(222 30% 13%);
+}
+[data-theme="dark"] .bg-gray-200:not([class*="dark:bg-"]) {
+  background-color: hsl(222 30% 17%);
+}
+[data-theme="dark"] .bg-slate-50:not([class*="dark:bg-"]) {
+  background-color: hsl(222 47% 6%);
+}
+[data-theme="dark"] .bg-slate-100:not([class*="dark:bg-"]) {
+  background-color: hsl(222 30% 13%);
+}
+[data-theme="dark"] .bg-\[\#fafafa\]:not([class*="dark:bg-"]) {
+  background-color: hsl(222 47% 6%);
+}
+
+[data-theme="dark"] .text-gray-900:not([class*="dark:text-"]) {
+  color: hsl(210 20% 92%);
+}
+[data-theme="dark"] .text-gray-800:not([class*="dark:text-"]) {
+  color: hsl(210 18% 88%);
+}
+[data-theme="dark"] .text-gray-700:not([class*="dark:text-"]) {
+  color: hsl(210 16% 80%);
+}
+[data-theme="dark"] .text-gray-600:not([class*="dark:text-"]) {
+  color: hsl(210 16% 75%);
+}
+[data-theme="dark"] .text-gray-500:not([class*="dark:text-"]) {
+  color: hsl(217 12% 60%);
+}
+[data-theme="dark"] .text-gray-400:not([class*="dark:text-"]) {
+  color: hsl(217 12% 55%);
+}
+[data-theme="dark"] .text-slate-700:not([class*="dark:text-"]) {
+  color: hsl(210 16% 80%);
+}
+[data-theme="dark"] .text-slate-600:not([class*="dark:text-"]) {
+  color: hsl(210 16% 75%);
+}
+[data-theme="dark"] .text-slate-500:not([class*="dark:text-"]) {
+  color: hsl(217 12% 60%);
+}
+[data-theme="dark"] .text-slate-400:not([class*="dark:text-"]) {
+  color: hsl(217 12% 55%);
+}
+
+[data-theme="dark"] .border-gray-200:not([class*="dark:border-"]) {
+  border-color: hsl(222 25% 18%);
+}
+[data-theme="dark"] .border-gray-100:not([class*="dark:border-"]) {
+  border-color: hsl(222 25% 15%);
+}
+[data-theme="dark"] .border-gray-300:not([class*="dark:border-"]) {
+  border-color: hsl(222 25% 22%);
+}
+[data-theme="dark"] .border-slate-200:not([class*="dark:border-"]) {
+  border-color: hsl(222 25% 18%);
+}
+[data-theme="dark"] .border-slate-100:not([class*="dark:border-"]) {
+  border-color: hsl(222 25% 15%);
+}
+[data-theme="dark"] .border-slate-300:not([class*="dark:border-"]) {
+  border-color: hsl(222 25% 22%);
+}
+
+[data-theme="dark"] .hover\:bg-gray-50:not([class*="dark:hover:bg-"]):hover {
+  background-color: hsl(222 30% 14%);
+}
+[data-theme="dark"] .hover\:bg-gray-100:not([class*="dark:hover:bg-"]):hover {
+  background-color: hsl(222 30% 17%);
+}
+[data-theme="dark"] .hover\:bg-white:not([class*="dark:hover:bg-"]):hover {
+  background-color: hsl(222 40% 12%);
+}
+[data-theme="dark"] .hover\:bg-slate-50:not([class*="dark:hover:bg-"]):hover {
+  background-color: hsl(222 30% 14%);
+}
+[data-theme="dark"] .hover\:bg-slate-100:not([class*="dark:hover:bg-"]):hover {
+  background-color: hsl(222 30% 17%);
+}
+[data-theme="dark"] .hover\:bg-gray-200:not([class*="dark:hover:bg-"]):hover {
+  background-color: hsl(222 30% 20%);
+}
+[data-theme="dark"] .hover\:bg-gray-300:not([class*="dark:hover:bg-"]):hover {
+  background-color: hsl(222 30% 24%);
+}
+[data-theme="dark"] .hover\:bg-slate-200:not([class*="dark:hover:bg-"]):hover {
+  background-color: hsl(222 30% 20%);
+}
+[data-theme="dark"] .hover\:bg-slate-300:not([class*="dark:hover:bg-"]):hover {
+  background-color: hsl(222 30% 24%);
+}
+
+[data-theme="dark"] .focus\:bg-white:not([class*="dark:focus:bg-"]):focus {
+  background-color: hsl(222 40% 9%);
+}
+
+[data-theme="dark"] .hover\:text-gray-700:not([class*="dark:hover:text-"]):hover {
+  color: hsl(210 16% 80%);
+}
+[data-theme="dark"] .hover\:text-gray-900:not([class*="dark:hover:text-"]):hover {
+  color: hsl(210 20% 92%);
+}
+[data-theme="dark"] .hover\:text-slate-700:not([class*="dark:hover:text-"]):hover {
+  color: hsl(210 16% 80%);
+}
+
+[data-theme="dark"] .hover\:border-gray-200:not([class*="dark:hover:border-"]):hover {
+  border-color: hsl(222 25% 22%);
+}
+[data-theme="dark"] .hover\:border-gray-300:not([class*="dark:hover:border-"]):hover {
+  border-color: hsl(222 25% 26%);
+}
+[data-theme="dark"] .hover\:border-slate-200:not([class*="dark:hover:border-"]):hover {
+  border-color: hsl(222 25% 22%);
+}
+[data-theme="dark"] .hover\:border-slate-300:not([class*="dark:hover:border-"]):hover {
+  border-color: hsl(222 25% 26%);
+}
+
+[data-theme="dark"] .divide-gray-100:not([class*="dark:divide-"]) > * {
+  border-color: hsl(222 25% 15%);
+}
+[data-theme="dark"] .divide-gray-200:not([class*="dark:divide-"]) > * {
+  border-color: hsl(222 25% 18%);
+}
+[data-theme="dark"] .divide-slate-100:not([class*="dark:divide-"]) > * {
+  border-color: hsl(222 25% 15%);
+}
+[data-theme="dark"] .divide-slate-200:not([class*="dark:divide-"]) > * {
+  border-color: hsl(222 25% 18%);
+}
+
+[data-theme="dark"] .placeholder-gray-400:not([class*="dark:placeholder-"])::placeholder {
+  color: hsl(217 12% 55%);
+}
+[data-theme="dark"] .placeholder-gray-500:not([class*="dark:placeholder-"])::placeholder {
+  color: hsl(217 12% 50%);
+}
+
+[data-theme="dark"] .ring-gray-200:not([class*="dark:ring-"]) {
+  --tw-ring-color: hsl(222 25% 18%);
+}
+[data-theme="dark"] .ring-slate-200:not([class*="dark:ring-"]) {
+  --tw-ring-color: hsl(222 25% 18%);
+}
+
+/* ===== Code block color themes =====
+   Default (:root) = Monokai (the historical hardcoded theme).
+   Each [data-code-theme="..."] block overrides the variables.
+   data-code-theme is applied to <html> by AppLayout from settings.codeTheme. */
+:root {
+  --code-bg: #272822;
+  --code-border: #3e3d32;
+  --code-header-bg: #1f201b;
+  --code-header-text: #90908a;
+  --code-header-hover-bg: #3e3d32;
+  --code-header-hover-text: #f8f8f2;
+  --code-text: #f8f8f2;
+  --code-lineno-text: rgba(248, 248, 242, 0.35);
+  --code-lineno-bg: rgba(0, 0, 0, 0.18);
+  --code-lineno-border: rgba(248, 248, 242, 0.08);
+  --code-copied-icon: #4ade80;
+
+  --code-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+  --code-font-size: 12.5px;
+
+  --hljs-keyword: #f92672;
+  --hljs-string: #e6db74;
+  --hljs-comment: #75715e;
+  --hljs-number: #ae81ff;
+  --hljs-title: #a6e22e;
+  --hljs-attr: #fd971f;
+  --hljs-built-in: #66d9ef;
+  --hljs-tag: #f92672;
+  --hljs-variable: #f8f8f2;
+  --hljs-meta: #75715e;
+  --hljs-addition: #a6e22e;
+  --hljs-deletion: #f92672;
+}
+
+[data-code-theme="github"] {
+  --code-bg: #f6f8fa;
+  --code-border: #e1e4e8;
+  --code-header-bg: #eff2f4;
+  --code-header-text: #6a737d;
+  --code-header-hover-bg: #e1e4e8;
+  --code-header-hover-text: #24292e;
+  --code-text: #24292e;
+  --code-lineno-text: rgba(0, 0, 0, 0.38);
+  --code-lineno-bg: rgba(0, 0, 0, 0.04);
+  --code-lineno-border: rgba(0, 0, 0, 0.08);
+  --code-copied-icon: #1a7f37;
+
+  --hljs-keyword: #d73a49;
+  --hljs-string: #032f62;
+  --hljs-comment: #6a737d;
+  --hljs-number: #005cc5;
+  --hljs-title: #6f42c1;
+  --hljs-attr: #005cc5;
+  --hljs-built-in: #005cc5;
+  --hljs-tag: #22863a;
+  --hljs-variable: #e36209;
+  --hljs-meta: #6a737d;
+  --hljs-addition: #22863a;
+  --hljs-deletion: #d73a49;
+}
+
+[data-code-theme="github-dark"] {
+  --code-bg: #0d1117;
+  --code-border: #30363d;
+  --code-header-bg: #161b22;
+  --code-header-text: #8b949e;
+  --code-header-hover-bg: #30363d;
+  --code-header-hover-text: #c9d1d9;
+  --code-text: #c9d1d9;
+  --code-lineno-text: rgba(201, 209, 217, 0.35);
+  --code-lineno-bg: rgba(0, 0, 0, 0.25);
+  --code-lineno-border: rgba(201, 209, 217, 0.08);
+  --code-copied-icon: #7ee787;
+
+  --hljs-keyword: #ff7b72;
+  --hljs-string: #a5d6ff;
+  --hljs-comment: #8b949e;
+  --hljs-number: #79c0ff;
+  --hljs-title: #d2a8ff;
+  --hljs-attr: #79c0ff;
+  --hljs-built-in: #79c0ff;
+  --hljs-tag: #7ee787;
+  --hljs-variable: #ffa657;
+  --hljs-meta: #8b949e;
+  --hljs-addition: #7ee787;
+  --hljs-deletion: #ff7b72;
+}
+
+[data-code-theme="dracula"] {
+  --code-bg: #282a36;
+  --code-border: #191a21;
+  --code-header-bg: #21222c;
+  --code-header-text: #6272a4;
+  --code-header-hover-bg: #343746;
+  --code-header-hover-text: #f8f8f2;
+  --code-text: #f8f8f2;
+  --code-lineno-text: rgba(248, 248, 242, 0.35);
+  --code-lineno-bg: rgba(0, 0, 0, 0.22);
+  --code-lineno-border: rgba(248, 248, 242, 0.08);
+  --code-copied-icon: #50fa7b;
+
+  --hljs-keyword: #ff79c6;
+  --hljs-string: #f1fa8c;
+  --hljs-comment: #6272a4;
+  --hljs-number: #bd93f9;
+  --hljs-title: #50fa7b;
+  --hljs-attr: #50fa7b;
+  --hljs-built-in: #8be9fd;
+  --hljs-tag: #ff79c6;
+  --hljs-variable: #f8f8f2;
+  --hljs-meta: #6272a4;
+  --hljs-addition: #50fa7b;
+  --hljs-deletion: #ff5555;
+}
+
+[data-code-theme="atom-one-dark"] {
+  --code-bg: #282c34;
+  --code-border: #21252b;
+  --code-header-bg: #21252b;
+  --code-header-text: #5c6370;
+  --code-header-hover-bg: #3a3f4b;
+  --code-header-hover-text: #abb2bf;
+  --code-text: #abb2bf;
+  --code-lineno-text: rgba(171, 178, 191, 0.35);
+  --code-lineno-bg: rgba(0, 0, 0, 0.2);
+  --code-lineno-border: rgba(171, 178, 191, 0.08);
+  --code-copied-icon: #98c379;
+
+  --hljs-keyword: #c678dd;
+  --hljs-string: #98c379;
+  --hljs-comment: #5c6370;
+  --hljs-number: #d19a66;
+  --hljs-title: #61afef;
+  --hljs-attr: #d19a66;
+  --hljs-built-in: #e6c07b;
+  --hljs-tag: #e06c75;
+  --hljs-variable: #e06c75;
+  --hljs-meta: #5c6370;
+  --hljs-addition: #98c379;
+  --hljs-deletion: #e06c75;
+}
+
+[data-code-theme="atom-one-light"] {
+  --code-bg: #fafafa;
+  --code-border: #e5e5e6;
+  --code-header-bg: #f0f0f0;
+  --code-header-text: #909090;
+  --code-header-hover-bg: #e5e5e6;
+  --code-header-hover-text: #383a42;
+  --code-text: #383a42;
+  --code-lineno-text: rgba(0, 0, 0, 0.38);
+  --code-lineno-bg: rgba(0, 0, 0, 0.04);
+  --code-lineno-border: rgba(0, 0, 0, 0.08);
+  --code-copied-icon: #50a14f;
+
+  --hljs-keyword: #a626a4;
+  --hljs-string: #50a14f;
+  --hljs-comment: #909090;
+  --hljs-number: #c18401;
+  --hljs-title: #4078f2;
+  --hljs-attr: #c18401;
+  --hljs-built-in: #c18401;
+  --hljs-tag: #e45649;
+  --hljs-variable: #986801;
+  --hljs-meta: #909090;
+  --hljs-addition: #50a14f;
+  --hljs-deletion: #e45649;
+}
+
+[data-code-theme="vs"] {
+  --code-bg: #ffffff;
+  --code-border: #dddddd;
+  --code-header-bg: #f0f0f0;
+  --code-header-text: #888888;
+  --code-header-hover-bg: #e0e0e0;
+  --code-header-hover-text: #000000;
+  --code-text: #000000;
+  --code-lineno-text: rgba(0, 0, 0, 0.4);
+  --code-lineno-bg: rgba(0, 0, 0, 0.03);
+  --code-lineno-border: rgba(0, 0, 0, 0.08);
+  --code-copied-icon: #008000;
+
+  --hljs-keyword: #0000ff;
+  --hljs-string: #a31515;
+  --hljs-comment: #008000;
+  --hljs-number: #098658;
+  --hljs-title: #795e26;
+  --hljs-attr: #ff0000;
+  --hljs-built-in: #0000ff;
+  --hljs-tag: #800000;
+  --hljs-variable: #ff0000;
+  --hljs-meta: #008000;
+  --hljs-addition: #008000;
+  --hljs-deletion: #ff0000;
+}
+
+[data-code-theme="vs2015"] {
+  --code-bg: #1e1e1e;
+  --code-border: #2d2d30;
+  --code-header-bg: #252526;
+  --code-header-text: #858585;
+  --code-header-hover-bg: #3a3a3a;
+  --code-header-hover-text: #dcdcdc;
+  --code-text: #dcdcdc;
+  --code-lineno-text: rgba(220, 220, 220, 0.35);
+  --code-lineno-bg: rgba(0, 0, 0, 0.25);
+  --code-lineno-border: rgba(220, 220, 220, 0.08);
+  --code-copied-icon: #57a64a;
+
+  --hljs-keyword: #569cd6;
+  --hljs-string: #d69d85;
+  --hljs-comment: #57a64a;
+  --hljs-number: #b5cea8;
+  --hljs-title: #dcdcaa;
+  --hljs-attr: #9cdcfe;
+  --hljs-built-in: #4ec9b0;
+  --hljs-tag: #569cd6;
+  --hljs-variable: #9cdcfe;
+  --hljs-meta: #9b9b9b;
+  --hljs-addition: #57a64a;
+  --hljs-deletion: #f44747;
+}
+
+/* Code block font family overrides.
+   data-code-font is applied to <html> by AppLayout from settings.codeFont.
+   Each value sets a monospace stack with sensible fallbacks for missing fonts. */
+[data-code-font="system"] {
+  --code-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+}
+[data-code-font="menlo"] {
+  --code-font-family: Menlo, Monaco, 'Courier New', monospace;
+}
+[data-code-font="consolas"] {
+  --code-font-family: Consolas, 'Courier New', monospace;
+}
+[data-code-font="monaco"] {
+  --code-font-family: Monaco, Menlo, 'Courier New', monospace;
+}
+[data-code-font="courier"] {
+  --code-font-family: 'Courier New', Courier, monospace;
+}
+[data-code-font="jetbrains"] {
+  --code-font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, monospace;
+}
+[data-code-font="firacode"] {
+  --code-font-family: 'Fira Code', Menlo, Monaco, Consolas, monospace;
+}
+[data-code-font="sfmono"] {
+  --code-font-family: 'SF Mono', Menlo, Monaco, monospace;
+}
+
+/* Code block font size overrides.
+   data-code-font-size is applied to <html> by AppLayout from settings.codeFontSize.
+   Each value sets an absolute pixel size for code blocks, gutters, and inline code. */
+[data-code-font-size="xs"] {
+  --code-font-size: 11px;
+}
+[data-code-font-size="sm"] {
+  --code-font-size: 12px;
+}
+[data-code-font-size="md"] {
+  --code-font-size: 12.5px;
+}
+[data-code-font-size="lg"] {
+  --code-font-size: 14px;
+}
+[data-code-font-size="xl"] {
+  --code-font-size: 16px;
+}
+
+/* highlight.js token colors - driven by theme variables.
+   Unlayered so these win over Tailwind's layered utilities on equal specificity. */
+.hljs {
+  background: var(--code-bg);
+  color: var(--code-text);
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-doctag,
+.hljs-literal,
+.hljs-section {
+  color: var(--hljs-keyword);
+}
+.hljs-string,
+.hljs-meta .hljs-string,
+.hljs-regexp,
+.hljs-link {
+  color: var(--hljs-string);
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--hljs-comment);
+  font-style: italic;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--hljs-number);
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-name {
+  color: var(--hljs-title);
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-property {
+  color: var(--hljs-attr);
+}
+.hljs-meta {
+  color: var(--hljs-meta);
+}
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-type {
+  color: var(--hljs-built-in);
+}
+.hljs-tag {
+  color: var(--hljs-tag);
+}
+.hljs-variable,
+.hljs-template-variable,
+.hljs-params {
+  color: var(--hljs-variable);
+}
+.hljs-addition {
+  color: var(--hljs-addition);
+}
+.hljs-deletion {
+  color: var(--hljs-deletion);
 }

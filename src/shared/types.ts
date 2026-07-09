@@ -98,6 +98,7 @@ export interface Assistant {
   prompt: string
   providerId?: string
   modelId?: string
+  rerankModelRef?: ActiveModelRef | null
   modelParams: AssistantModelParams
   knowledgeBaseIds: string[]
   createdAt: string
@@ -136,6 +137,14 @@ export interface MessageCitation {
   score: number
 }
 
+export interface MessageImage {
+  dataUrl: string
+  mimeType: string
+  name?: string
+  width?: number
+  height?: number
+}
+
 export interface Message {
   id: string
   conversationId: string
@@ -144,7 +153,34 @@ export interface Message {
   createdAt: string
   citations?: MessageCitation[]
   reasoning?: string
+  images?: MessageImage[]
 }
+
+export type AppLanguage = 'zh' | 'en' | 'ja' | 'ko'
+
+export type AppTheme = 'light' | 'dark'
+
+export type CodeTheme =
+  | 'monokai'
+  | 'github'
+  | 'github-dark'
+  | 'dracula'
+  | 'atom-one-dark'
+  | 'atom-one-light'
+  | 'vs'
+  | 'vs2015'
+
+export type CodeFont =
+  | 'system'
+  | 'menlo'
+  | 'consolas'
+  | 'monaco'
+  | 'courier'
+  | 'jetbrains'
+  | 'firacode'
+  | 'sfmono'
+
+export type CodeFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 
 export type ProviderKind = 'deepseek' | 'nvidia' | 'mistral' | 'gemini' | 'custom'
 
@@ -154,10 +190,16 @@ export interface ProviderModelCapabilities {
   rerank: boolean
 }
 
+export interface ProviderModelInputs {
+  text: boolean
+  image: boolean
+}
+
 export interface ProviderModel {
   id: string
   name?: string
   capabilities: ProviderModelCapabilities
+  inputs?: ProviderModelInputs
 }
 
 export interface Provider {
@@ -227,6 +269,15 @@ export interface AppSettings {
   mistralApiUrl: string
   mistralOcrModel: string
   userAvatar: string
+
+  codeBlockWordWrap: boolean
+  codeBlockShowLineNumbers: boolean
+  codeTheme: CodeTheme
+  codeFont: CodeFont
+  codeFontSize: CodeFontSize
+
+  language: AppLanguage
+  theme: AppTheme
 
   /** @deprecated migrated into `providers` on load; never read by new code. */
   embeddingPresets?: EmbeddingPreset[]

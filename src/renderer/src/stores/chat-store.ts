@@ -1,4 +1,5 @@
-import type { Conversation, Message, MessageCitation } from '@shared/types'
+import type { Conversation, Message, MessageCitation, MessageImage } from '@shared/types'
+import { translate } from '../i18n'
 import { create } from 'zustand'
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -41,11 +42,14 @@ interface ChatState {
     message: string,
     kbIds: string[],
     llmPresetId?: string,
-    assistantId?: string
+    assistantId?: string,
+    images?: MessageImage[]
   ) => Promise<void>
   deleteMessage: (messageId: string) => Promise<void>
-  editMessage: (messageId: string, content: string) => Promise<void>
+  editMessage: (messageId: string, content: string, images?: MessageImage[]) => Promise<void>
+  updateMessageContent: (messageId: string, content: string) => Promise<void>
   regenerateMessage: (assistantMessageId: string) => Promise<void>
+  abortStream: (assistantMessageId: string) => Promise<void>
   subscribeProgress: () => () => void
   clearError: () => void
 }
@@ -64,7 +68,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const conversations = await window.electronAPI.invoke('conversation:list')
       set({ conversations, initialized: true })
     } catch (e) {
-      set({ error: errorMessage(e, '加载对话列表失败'), initialized: true })
+      set({ error: errorMessage(e, translate('error.loadConversationsFailed')), initialized: true })
     }
   },
 
@@ -157,10 +161,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ currentConversationId: null, conversationMessages: [] })
   },
 
-  async sendMessage(message, kbIds, llmPresetId, assistantId) {
+  async sendMessage(message, kbIds, llmPresetId, assistantId, images) {
     const { currentConversationId } = get()
     if (!currentConversationId) {
-      throw new Error('未选择对话')
+      throw new Error(translate('error.noConversationSelected'))
     }
 
     // 乐观更新：立刻把用户消息推入列表，UI 即时显示，不必等 IPC 返回
@@ -169,7 +173,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversationId: currentConversationId,
       role: 'user',
       content: message,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      images: images && images.length > 0 ? images : undefined
     }
 
     set({
@@ -185,7 +190,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         rerankEnabled: false,
         topK: 10,
         llmPresetId,
-        assistantId
+        assistantId,
+        images
       })
 
       const { conversations } = get()
@@ -253,7 +259,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversationMessages: state.conversationMessages.filter(
           (m) => m.id !== optimisticUserMessage.id
         ),
-        error: errorMessage(e, '发送失败')
+        error: errorMessage(e, translate('error.sendFailed'))
       }))
     }
   },
@@ -283,28 +289,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streams: remainingStreams
       })
     } catch (e) {
-      set({ error: errorMessage(e, '删除消息失败') })
+      set({ error: errorMessage(e, translate('error.deleteMessageFailed')) })
     }
   },
 
-  async editMessage(messageId, content) {
+  async editMessage(messageId, content, images) {
     const { currentConversationId, conversationMessages } = get()
-    if (!currentConversationId) throw new Error('未选择对话')
+    if (!currentConversationId) throw new Error(translate('error.noConversationSelected'))
 
     const trimmed = content.trim()
-    if (!trimmed) throw new Error('消息内容不能为空')
+    if (!trimmed) throw new Error(translate('error.messageEmpty'))
 
     const targetIndex = conversationMessages.findIndex((m) => m.id === messageId)
-    if (targetIndex === -1) throw new Error('消息不存在')
+    if (targetIndex === -1) throw new Error(translate('error.messageNotFound'))
 
     const target = conversationMessages[targetIndex]
-    if (target.role !== 'user') throw new Error('只能编辑用户消息')
+    if (target.role !== 'user') throw new Error(translate('error.onlyEditUserMessages'))
 
     const snapshot = conversationMessages
     const subsequentCount = conversationMessages.length - targetIndex - 1
     const optimisticMessages = [
       ...conversationMessages.slice(0, targetIndex),
-      { ...target, content: trimmed }
+      {
+        ...target,
+        content: trimmed,
+        images: images && images.length > 0 ? images : undefined
+      }
     ]
 
     set({
@@ -315,7 +325,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const result = await window.electronAPI.invoke('message:edit', {
         messageId,
-        content: trimmed
+        content: trimmed,
+        images
       })
       const now = new Date().toISOString()
 
@@ -376,20 +387,59 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         conversationMessages: snapshot,
-        error: errorMessage(e, '编辑失败')
+        error: errorMessage(e, translate('error.editFailed'))
+      })
+    }
+  },
+
+  async updateMessageContent(messageId, content) {
+    const { currentConversationId, conversationMessages } = get()
+    if (!currentConversationId) throw new Error(translate('error.noConversationSelected'))
+
+    const trimmed = content.trim()
+    if (!trimmed) throw new Error(translate('error.messageEmpty'))
+
+    const targetIndex = conversationMessages.findIndex((m) => m.id === messageId)
+    if (targetIndex === -1) throw new Error(translate('error.messageNotFound'))
+
+    const snapshot = conversationMessages
+    const optimisticMessages = conversationMessages.map((m) =>
+      m.id === messageId ? { ...m, content: trimmed } : m
+    )
+
+    set({ error: null, conversationMessages: optimisticMessages })
+
+    try {
+      const result = await window.electronAPI.invoke('message:update', {
+        messageId,
+        content: trimmed
+      })
+      const now = new Date().toISOString()
+      set({
+        conversationMessages: optimisticMessages.map((m) =>
+          m.id === messageId ? result.message : m
+        ),
+        conversations: get().conversations.map((c) =>
+          c.id === currentConversationId ? { ...c, updatedAt: now } : c
+        )
+      })
+    } catch (e) {
+      set({
+        conversationMessages: snapshot,
+        error: errorMessage(e, translate('error.updateFailed'))
       })
     }
   },
 
   async regenerateMessage(assistantMessageId) {
     const { currentConversationId, conversationMessages } = get()
-    if (!currentConversationId) throw new Error('未选择对话')
+    if (!currentConversationId) throw new Error(translate('error.noConversationSelected'))
 
     const targetIndex = conversationMessages.findIndex((m) => m.id === assistantMessageId)
-    if (targetIndex === -1) throw new Error('消息不存在')
+    if (targetIndex === -1) throw new Error(translate('error.messageNotFound'))
 
     const target = conversationMessages[targetIndex]
-    if (target.role !== 'assistant') throw new Error('只能重新生成助手消息')
+    if (target.role !== 'assistant') throw new Error(translate('error.onlyRegenerateAssistantMessages'))
 
     const snapshot = conversationMessages
     const subsequentCount = conversationMessages.length - targetIndex - 1
@@ -459,8 +509,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         conversationMessages: snapshot,
-        error: errorMessage(e, '重新生成失败')
+        error: errorMessage(e, translate('error.regenerateFailed'))
       })
+    }
+  },
+
+  async abortStream(assistantMessageId) {
+    try {
+      await window.electronAPI.invoke('chat:abort', { assistantMessageId })
+    } catch (e) {
+      set({ error: errorMessage(e, translate('error.abortFailed')) })
     }
   },
 

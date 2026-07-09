@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useTranslation, type TranslationKey } from '../i18n'
 import { Search, ArrowLeft, FileText, FileType, Globe, Loader2, Sparkles, AlertCircle } from 'lucide-react'
 import { useDocStore } from '../stores/doc-store'
 import { useKBStore } from '../stores/kb-store'
 
-const modes = [
-  { value: 'hybrid' as const, label: '混合检索', desc: 'BM25 + 向量' },
-  { value: 'bm25' as const, label: 'BM25', desc: '关键词匹配' },
-  { value: 'vector' as const, label: '向量', desc: '语义搜索' },
-  { value: 'graph' as const, label: '图谱', desc: 'GraphRAG' }
+const modes: Array<{ value: 'hybrid' | 'bm25' | 'vector' | 'graph'; labelKey: TranslationKey; descKey: TranslationKey }> = [
+  { value: 'hybrid' as const, labelKey: 'searchPage.modeHybrid', descKey: 'searchPage.descHybrid' },
+  { value: 'bm25' as const, labelKey: 'searchPage.modeBm25', descKey: 'searchPage.descBm25' },
+  { value: 'vector' as const, labelKey: 'searchPage.modeVector', descKey: 'searchPage.descVector' },
+  { value: 'graph' as const, labelKey: 'searchPage.modeGraph', descKey: 'searchPage.descGraph' }
 ]
 
 export function SearchPage() {
@@ -29,6 +30,7 @@ export function SearchPage() {
   const [searching, setSearching] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const { t } = useTranslation()
   const kb = knowledgeBases.find((k) => k.id === kbId)
 
   useEffect(() => {
@@ -55,18 +57,18 @@ export function SearchPage() {
     }
   }
 
-  const sourceBadge = (source: string) => {
+  const sourceBadge = (source: string, t: (key: TranslationKey) => string) => {
     const colors: Record<string, string> = {
       bm25: 'bg-amber-50 text-amber-600',
       vector: 'bg-blue-50 text-blue-600',
-      hybrid: 'bg-purple-50 text-purple-600',
+      hybrid: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
       graph: 'bg-emerald-50 text-emerald-600'
     }
     const labels: Record<string, string> = {
-      bm25: 'BM25',
-      vector: '向量',
-      hybrid: '混合',
-      graph: '图谱'
+      bm25: t('searchPage.sourceBm25'),
+      vector: t('searchPage.sourceVector'),
+      hybrid: t('searchPage.sourceHybrid'),
+      graph: t('searchPage.sourceGraph')
     }
     return (
       <span
@@ -78,16 +80,17 @@ export function SearchPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-8 py-8">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
+    <div className="h-full overflow-y-auto">
+      <div className="max-w-5xl mx-auto px-8 py-8">
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-6">
         <button
           onClick={() => navigate(`/kb/${kbId}`)}
           className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
         >
           <ArrowLeft className="w-5 h-5 text-gray-400" />
         </button>
-        <h1 className="text-lg font-semibold text-gray-900">搜索 · {kb?.name}</h1>
+        <h1 className="text-lg font-semibold text-gray-900">{t('searchPage.title', { name: kb?.name ?? '' })}</h1>
       </div>
 
       {/* Search Input */}
@@ -101,7 +104,7 @@ export function SearchPage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              placeholder="输入搜索内容..."
+              placeholder={t('searchPage.placeholder')}
               className="w-full pl-10 pr-4 py-3 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
             />
           </div>
@@ -115,7 +118,7 @@ export function SearchPage() {
             ) : (
               <Search className="w-4 h-4" />
             )}
-            搜索
+             {t('common.search')}
           </button>
         </div>
 
@@ -130,10 +133,10 @@ export function SearchPage() {
                   ? 'bg-blue-50 text-blue-700 border border-blue-200'
                   : 'bg-white text-gray-500 border border-gray-200 hover:border-gray-300'
               }`}
-              title={mode.desc}
+              title={t(mode.descKey)}
             >
               {mode.value === 'graph' && <Sparkles className="w-3 h-3 inline mr-1" />}
-              {mode.label}
+              {t(mode.labelKey)}
             </button>
           ))}
         </div>
@@ -172,17 +175,17 @@ export function SearchPage() {
         {searchResults.length === 0 && searchQuery && !searching && !searchError && (
           <div className="text-center py-16">
             <Search className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-            <p className="text-gray-400 text-sm">未找到相关结果</p>
-            <p className="text-gray-300 text-xs mt-1">尝试更换搜索词或检索模式</p>
+            <p className="text-gray-400 text-sm">{t('searchPage.noResults')}</p>
+            <p className="text-gray-300 text-xs mt-1">{t('searchPage.tryDifferent')}</p>
           </div>
         )}
 
         {searchResults.length === 0 && !searchQuery && (
           <div className="text-center py-16">
             <Sparkles className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-            <p className="text-gray-400 text-sm">输入关键词开始搜索</p>
+            <p className="text-gray-400 text-sm">{t('searchPage.enterToSearch')}</p>
             <p className="text-gray-300 text-xs mt-1">
-              支持 BM25、向量、混合和图谱四种检索模式
+              {t('searchPage.supportModes')}
             </p>
           </div>
         )}
@@ -196,9 +199,9 @@ export function SearchPage() {
               <span className="text-xs font-medium text-gray-900 truncate">
                 {result.docTitle}
               </span>
-              {sourceBadge(result.source)}
+              {sourceBadge(result.source, t)}
               <span className="text-[10px] text-gray-400">
-                相关度: {((result.score / (searchResults[0]?.score || 1)) * 100).toFixed(1)}%
+                {t('searchPage.relevance', { n: ((result.score / (searchResults[0]?.score || 1)) * 100).toFixed(1) })}
               </span>
             </div>
             <p className="text-sm text-gray-600 leading-relaxed line-clamp-4">
@@ -222,6 +225,7 @@ export function SearchPage() {
             )}
           </div>
         ))}
+      </div>
       </div>
     </div>
   )

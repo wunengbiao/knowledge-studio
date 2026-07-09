@@ -1,4 +1,5 @@
 import type {
+  ActiveModelRef,
   AppSettings,
   Assistant,
   AssistantModelParams,
@@ -7,6 +8,7 @@ import type {
   KnowledgeBase
 } from '@shared/types'
 import { DEFAULT_ASSISTANT_MODEL_PARAMS, DEFAULT_ASSISTANT_PROMPT } from '@shared/types'
+import { useTranslation } from '../../i18n'
 import {
   Bot,
   Check,
@@ -21,6 +23,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageMarkdown } from '../chat/markdown/MessageMarkdown'
+import { ModelSelect } from './ModelSelect'
 
 export type AssistantFormValue = {
   readonly name: string
@@ -28,6 +31,7 @@ export type AssistantFormValue = {
   readonly prompt: string
   readonly providerId: string | null
   readonly modelId: string | null
+  readonly rerankModelRef: ActiveModelRef | null
   readonly modelParams: AssistantModelParams
   readonly knowledgeBaseIds: string[]
 }
@@ -52,13 +56,14 @@ interface AssistantSelectorProps {
   readonly onEdit?: () => void
 }
 
-function initialForm(assistant: Assistant | null): AssistantFormValue {
+function initialForm(assistant: Assistant | null, defaultName: string): AssistantFormValue {
   return {
-    name: assistant?.name ?? '新助手',
+    name: assistant?.name ?? defaultName,
     description: assistant?.description ?? '',
     prompt: assistant?.prompt ?? DEFAULT_ASSISTANT_PROMPT,
     providerId: assistant?.providerId ?? null,
     modelId: assistant?.modelId ?? null,
+    rerankModelRef: assistant?.rerankModelRef ?? null,
     modelParams: assistant?.modelParams ?? DEFAULT_ASSISTANT_MODEL_PARAMS,
     knowledgeBaseIds: assistant?.knowledgeBaseIds ?? []
   }
@@ -77,16 +82,17 @@ export function AssistantSelector({
   onCreate,
   onEdit
 }: AssistantSelectorProps) {
+  const { t } = useTranslation()
   return (
     <div className="inline-flex items-center gap-1.5 bg-transparent no-drag">
-      <span className="text-xs text-gray-400">助手</span>
+      <span className="text-xs text-gray-400">{t('assistant.label')}</span>
       <select
         value={currentAssistant?.id ?? ''}
         onChange={(event) => onSelect(event.target.value)}
-        className="h-6 max-w-[160px] rounded-md border border-transparent bg-transparent px-1.5 text-xs font-medium text-gray-700 outline-none transition-colors hover:border-gray-200 hover:bg-white focus:border-purple-200 focus:bg-white"
+        className="h-6 max-w-[160px] rounded-md border border-transparent bg-transparent px-1.5 text-xs font-medium text-gray-700 outline-none transition-colors hover:border-gray-200 hover:bg-white focus:border-blue-200 focus:bg-white dark:text-gray-300 dark:hover:border-gray-700 dark:hover:bg-gray-900 dark:focus:bg-gray-900"
       >
         {assistants.length === 0 ? (
-          <option value="">默认助手</option>
+          <option value="">{t('assistant.default')}</option>
         ) : (
           assistants.map((assistant) => (
             <option key={assistant.id} value={assistant.id}>
@@ -104,10 +110,10 @@ export function AssistantSelector({
         <button
           type="button"
           onClick={onCreate}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors dark:text-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700"
         >
           <Plus className="w-3.5 h-3.5" />
-          新建
+          {t('assistant.create')}
         </button>
       )}
       {onEdit && (
@@ -118,7 +124,7 @@ export function AssistantSelector({
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors"
         >
           <Settings2 className="w-3.5 h-3.5" />
-          设置
+          {t('sidebar.settings')}
         </button>
       )}
     </div>
@@ -136,25 +142,40 @@ export function AssistantSettingsPanel({
   onSave,
   onDelete
 }: AssistantSettingsPanelProps) {
-  const [form, setForm] = useState<AssistantFormValue>(() => initialForm(assistant))
+  const { t } = useTranslation()
+  const [form, setForm] = useState<AssistantFormValue>(() =>
+    initialForm(assistant, t('assistant.newAssistant'))
+  )
   const [error, setError] = useState<string | null>(null)
   const [promptMode, setPromptMode] = useState<'edit' | 'preview'>('edit')
 
   useEffect(() => {
     if (open) {
-      setForm(initialForm(assistant))
+      setForm(initialForm(assistant, t('assistant.newAssistant')))
       setError(null)
       setPromptMode('edit')
     }
   }, [open, assistant])
 
   const modelValue = form.providerId && form.modelId ? `${form.providerId}::${form.modelId}` : ''
+  const rerankValue = form.rerankModelRef
+    ? `${form.rerankModelRef.providerId}::${form.rerankModelRef.modelId}`
+    : ''
   const chatOptions = useMemo(() => {
     if (!settings) return []
     return settings.providers
       .map((provider) => ({
         provider,
         models: provider.models.filter((model) => model.capabilities.chat && model.id.trim())
+      }))
+      .filter((group) => group.models.length > 0)
+  }, [settings])
+  const rerankOptions = useMemo(() => {
+    if (!settings) return []
+    return settings.providers
+      .map((provider) => ({
+        provider,
+        models: provider.models.filter((model) => model.capabilities.rerank && model.id.trim())
       }))
       .filter((group) => group.models.length > 0)
   }, [settings])
@@ -182,14 +203,14 @@ export function AssistantSettingsPanel({
 
   const handleSubmit = async () => {
     if (!form.name.trim()) {
-      setError('助手名称不能为空')
+      setError(t('assistant.nameRequired'))
       return
     }
     setError(null)
     try {
       await onSave({ ...form, name: form.name.trim(), description: form.description.trim() })
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存失败')
+      setError(err instanceof Error ? err.message : t('kbPage.saveFailed'))
     }
   }
 
@@ -197,12 +218,12 @@ export function AssistantSettingsPanel({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/30 no-drag">
       <div className="w-[min(760px,92vw)] max-h-[88vh] overflow-hidden bg-white border border-gray-200 rounded-2xl shadow-2xl flex flex-col">
         <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100">
-          <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center dark:bg-slate-800 dark:text-slate-300">
             <Pencil className="w-5 h-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold text-gray-900">助手设置</h2>
-            <p className="text-xs text-gray-400 mt-0.5">配置提示词、模型参数和默认知识库。</p>
+            <h2 className="text-base font-semibold text-gray-900">{t('settings.assistantSettings')}</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{t('assistant.configHint')}</p>
           </div>
           <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X className="w-5 h-5" />
@@ -216,63 +237,63 @@ export function AssistantSettingsPanel({
             </div>
           )}
 
-          <section className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 space-y-3">
+          <section className="rounded-2xl border border-gray-100 bg-gray-50 p-4 space-y-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
-              <Bot className="h-4 w-4 text-purple-500" />
-              基础信息
+              <Bot className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+              {t('assistant.basicInfo')}
             </div>
             <label className="block">
-              <span className="text-xs font-medium text-gray-500">名称</span>
+              <span className="text-xs font-medium text-gray-500">{t('kbPage.name')}</span>
               <input
                 value={form.name}
                 onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
-                placeholder="给助手起个名字"
-                className="mt-1.5 w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                placeholder={t('assistant.namePlaceholder')}
+                className="mt-1.5 w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
               />
             </label>
             <label className="block">
-              <span className="text-xs font-medium text-gray-500">描述</span>
+              <span className="text-xs font-medium text-gray-500">{t('kbPage.description')}</span>
               <input
                 value={form.description}
                 onChange={(event) =>
                   setForm((prev) => ({ ...prev, description: event.target.value }))
                 }
-                placeholder="例如：论文阅读、代码问答"
-                className="mt-1.5 w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+                placeholder={t('assistant.promptPlaceholder')}
+                className="mt-1.5 w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
               />
             </label>
           </section>
 
-          <section className="rounded-2xl border border-purple-100 bg-gradient-to-br from-purple-50/70 to-white p-3">
+          <section className="rounded-2xl border border-slate-100 bg-gradient-to-br from-slate-50/70 to-white p-3 dark:border-slate-800 dark:from-slate-900/70 dark:to-gray-900">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div>
-                <div className="text-xs font-medium text-gray-700">系统提示词</div>
-                <div className="text-[11px] text-gray-400">支持 Markdown，可在预览中检查排版。</div>
+                <div className="text-xs font-medium text-gray-700">{t('assistant.systemPrompt')}</div>
+                <div className="text-[11px] text-gray-400">{t('assistant.markdownHint')}</div>
               </div>
-              <div className="inline-flex rounded-lg border border-purple-100 bg-white p-0.5 text-xs">
+              <div className="inline-flex rounded-lg border border-slate-100 bg-white p-0.5 text-xs dark:border-slate-700 dark:bg-gray-900">
                 <button
                   type="button"
                   onClick={() => setPromptMode('edit')}
                   className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 transition-colors ${
                     promptMode === 'edit'
-                      ? 'bg-purple-100 text-purple-700'
+                      ? 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
                       : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
                   <Pencil className="h-3 w-3" />
-                  编辑
+                  {t('common.edit')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setPromptMode('preview')}
                   className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 transition-colors ${
                     promptMode === 'preview'
-                      ? 'bg-purple-100 text-purple-700'
+                      ? 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
                       : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
                   <Eye className="h-3 w-3" />
-                  预览
+                  {t('common.preview')}
                 </button>
               </div>
             </div>
@@ -281,14 +302,14 @@ export function AssistantSettingsPanel({
                 value={form.prompt}
                 onChange={(event) => setForm((prev) => ({ ...prev, prompt: event.target.value }))}
                 rows={7}
-                className="w-full resize-none rounded-xl border border-purple-100 bg-white/90 px-3 py-2 text-sm leading-relaxed focus:border-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-100"
+                className="w-full resize-none rounded-xl border border-slate-100 bg-white/90 px-3 py-2 text-sm leading-relaxed focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-gray-900/90 dark:text-gray-100"
               />
             ) : (
-              <div className="min-h-[176px] rounded-xl border border-purple-100 bg-white px-3 py-2">
+              <div className="min-h-[176px] rounded-xl border border-slate-100 bg-white px-3 py-2 dark:border-slate-700 dark:bg-gray-900">
                 {form.prompt.trim() ? (
                   <MessageMarkdown content={form.prompt} className="leading-relaxed" />
                 ) : (
-                  <div className="py-10 text-center text-xs text-gray-400">暂无提示词内容</div>
+                  <div className="py-10 text-center text-xs text-gray-400">{t('assistant.noPrompt')}</div>
                 )}
               </div>
             )}
@@ -296,33 +317,42 @@ export function AssistantSettingsPanel({
 
           <section className="rounded-2xl border border-gray-100 bg-white p-4 space-y-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
-              <Settings2 className="h-4 w-4 text-purple-500" />
-              模型与参数
+              <Settings2 className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+              {t('assistant.modelAndParams')}
             </div>
             <div>
-              <div className="text-xs font-medium text-gray-500">模型</div>
-              <select
+              <div className="text-xs font-medium text-gray-500">{t('settings.model')}</div>
+              <ModelSelect
                 value={modelValue}
-                onChange={(event) => {
-                  const next = parseModelValue(event.target.value)
+                onChange={(nextValue) => {
+                  const next = parseModelValue(nextValue)
                   setForm((prev) => ({ ...prev, ...next }))
                 }}
-                className="mt-1 w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
-              >
-                <option value="">使用全局默认聊天模型</option>
-                {chatOptions.map((group) => (
-                  <optgroup key={group.provider.id} label={group.provider.name}>
-                    {group.models.map((model) => (
-                      <option
-                        key={`${group.provider.id}::${model.id}`}
-                        value={`${group.provider.id}::${model.id}`}
-                      >
-                        {model.name ? `${model.id} · ${model.name}` : model.id}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+                groups={chatOptions}
+                placeholder={t('assistant.useGlobalDefaultChatModel')}
+              />
+            </div>
+
+            <div>
+              <div className="text-xs font-medium text-gray-500">{t('assistant.rerankModel')}</div>
+              <ModelSelect
+                value={rerankValue}
+                onChange={(nextValue) => {
+                  const next = parseModelValue(nextValue)
+                  setForm((prev) => ({
+                    ...prev,
+                    rerankModelRef:
+                      next.providerId && next.modelId
+                        ? { providerId: next.providerId, modelId: next.modelId }
+                        : null
+                  }))
+                }}
+                groups={rerankOptions}
+                placeholder={t('assistant.useDefaultRerankModel')}
+              />
+              {rerankOptions.length === 0 && (
+                <p className="mt-1 text-xs text-amber-600">{t('assistant.noRerankCapability')}</p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -367,16 +397,16 @@ export function AssistantSettingsPanel({
           <section className="rounded-2xl border border-gray-100 bg-white p-4">
             <div className="flex items-center justify-between mb-2">
               <div>
-                <div className="text-xs font-medium text-gray-500">默认知识库</div>
+                <div className="text-xs font-medium text-gray-500">{t('assistant.defaultKb')}</div>
                 <div className="text-[11px] text-gray-400">
-                  未手动 @ 选择时，发送消息会使用这些知识库。
+                  {t('assistant.defaultKbHint')}
                 </div>
               </div>
-              <div className="text-[11px] text-gray-400">已选 {form.knowledgeBaseIds.length}</div>
+              <div className="text-[11px] text-gray-400">{t('assistant.selected', { n: form.knowledgeBaseIds.length })}</div>
             </div>
             {knowledgeBases.length === 0 ? (
               <div className="px-3 py-4 text-center text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl">
-                暂无知识库
+                {t('sidebar.noKnowledgeBases')}
               </div>
             ) : (
               <div className="flex flex-wrap gap-2">
@@ -389,7 +419,7 @@ export function AssistantSettingsPanel({
                       onClick={() => toggleKnowledgeBase(kb.id)}
                       className={`inline-flex max-w-full items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${
                         selected
-                          ? 'border-purple-200 bg-purple-50 text-purple-800'
+                          ? 'border-slate-200 bg-slate-50 text-slate-800 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100'
                           : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
                       }`}
                     >
@@ -404,7 +434,7 @@ export function AssistantSettingsPanel({
           </section>
         </div>
 
-        <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100 bg-gray-50/80">
+        <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100 bg-gray-50">
           <div className="flex items-center gap-2">
             {assistant && assistants.length > 1 && (
               <button
@@ -413,7 +443,7 @@ export function AssistantSettingsPanel({
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 bg-white border border-red-100 rounded-lg hover:bg-red-50 transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
-                删除
+                {t('common.delete')}
               </button>
             )}
           </div>
@@ -423,16 +453,16 @@ export function AssistantSettingsPanel({
               onClick={onClose}
               className="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
             >
-              取消
+              {t('common.cancel')}
             </button>
             <button
               type="button"
               onClick={handleSubmit}
               disabled={saving}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-lg hover:from-purple-600 hover:to-purple-700 disabled:opacity-50 transition-all"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg hover:from-blue-600 hover:to-blue-700 disabled:opacity-50 transition-all"
             >
               {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-              保存
+              {t('common.save')}
             </button>
           </div>
         </div>
@@ -470,7 +500,7 @@ function ParamField({
           type="checkbox"
           checked={enabled}
           onChange={(event) => onEnabledChange(event.target.checked)}
-          className="accent-purple-500"
+          className="accent-blue-500"
         />
       </span>
       <input
@@ -481,7 +511,7 @@ function ParamField({
         step={step}
         disabled={!enabled}
         onChange={(event) => onValueChange(Number(event.target.value))}
-        className="mt-2 w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg disabled:bg-gray-50 disabled:text-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+        className="mt-2 w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg disabled:bg-gray-50 disabled:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
       />
     </label>
   )
@@ -501,6 +531,7 @@ function defaultValueForType(type: CustomParamType): string | number | boolean {
 }
 
 function CustomParametersEditor({ entries, onChange }: CustomParametersEditorProps) {
+  const { t } = useTranslation()
   const keysRef = useRef<string[]>([])
   if (keysRef.current.length !== entries.length) {
     keysRef.current = entries.map((_, i) => keysRef.current[i] ?? crypto.randomUUID())
@@ -524,23 +555,23 @@ function CustomParametersEditor({ entries, onChange }: CustomParametersEditorPro
     <div className="space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-xs font-medium text-gray-500">自定义参数</div>
+          <div className="text-xs font-medium text-gray-500">{t('assistant.customParams')}</div>
           <div className="text-[11px] text-gray-400">
-            注入到请求体的额外字段（如 stream、effort、reasoning_effort）。同名参数会覆盖上方设置。
+            {t('assistant.customParamsPlaceholder')}
           </div>
         </div>
         <button
           type="button"
           onClick={addEntry}
-          className="inline-flex shrink-0 items-center gap-1 px-2.5 py-1 text-xs font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
+          className="inline-flex shrink-0 items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-700 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors dark:text-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700"
         >
           <Plus className="w-3 h-3" />
-          添加
+          {t('common.add')}
         </button>
       </div>
       {entries.length === 0 ? (
         <div className="px-3 py-3 text-center text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl">
-          暂无自定义参数
+          {t('assistant.noCustomParams')}
         </div>
       ) : (
         entries.map((entry, index) => (
@@ -563,6 +594,7 @@ interface CustomParameterRowProps {
 }
 
 function CustomParameterRow({ entry, onChange, onRemove }: CustomParameterRowProps) {
+  const { t } = useTranslation()
   const [jsonError, setJsonError] = useState<string | null>(null)
 
   const handleTypeChange = (type: CustomParamType) => {
@@ -580,7 +612,7 @@ function CustomParameterRow({ entry, onChange, onRemove }: CustomParameterRowPro
       JSON.parse(raw)
       setJsonError(null)
     } catch (err) {
-      setJsonError(err instanceof Error ? err.message : 'JSON 解析失败')
+      setJsonError(err instanceof Error ? err.message : t('assistant.jsonParseFailed'))
     }
   }
 
@@ -593,13 +625,13 @@ function CustomParameterRow({ entry, onChange, onRemove }: CustomParameterRowPro
         <input
           value={entry.name}
           onChange={(event) => onChange({ name: event.target.value })}
-          placeholder="参数名，例如 stream"
-          className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+          placeholder={t('assistant.paramNamePlaceholder')}
+          className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
         />
         <select
           value={entry.type}
           onChange={(event) => handleTypeChange(event.target.value as CustomParamType)}
-          className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+          className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
         >
           {CUSTOM_PARAM_TYPE_OPTIONS.map((type) => (
             <option key={type} value={type}>
@@ -611,7 +643,7 @@ function CustomParameterRow({ entry, onChange, onRemove }: CustomParameterRowPro
           type="button"
           onClick={onRemove}
           className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
-          aria-label="删除参数"
+          aria-label={t('assistant.deleteParam')}
         >
           <Trash2 className="w-4 h-4" />
         </button>
@@ -620,7 +652,7 @@ function CustomParameterRow({ entry, onChange, onRemove }: CustomParameterRowPro
         <select
           value={entry.value === true ? 'true' : 'false'}
           onChange={(event) => onChange({ value: event.target.value === 'true' })}
-          className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+          className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
         >
           <option value="true">true</option>
           <option value="false">false</option>
@@ -633,7 +665,7 @@ function CustomParameterRow({ entry, onChange, onRemove }: CustomParameterRowPro
             const num = Number(event.target.value)
             onChange({ value: Number.isFinite(num) ? num : 0 })
           }}
-          className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+          className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
         />
       ) : entry.type === 'json' ? (
         <div>
@@ -641,18 +673,18 @@ function CustomParameterRow({ entry, onChange, onRemove }: CustomParameterRowPro
             value={jsonValueString}
             onChange={(event) => handleJsonValueChange(event.target.value)}
             rows={3}
-            placeholder='例如 {"key":"value"} 或 [1,2,3]'
-            className="w-full resize-none px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300 font-mono"
+            placeholder={t('assistant.paramValuePlaceholder')}
+            className="w-full resize-none px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 font-mono"
           />
-          {jsonError && <div className="mt-1 text-[11px] text-red-500">JSON 错误：{jsonError}</div>}
+          {jsonError && <div className="mt-1 text-[11px] text-red-500">{t('assistant.jsonError')}{jsonError}</div>}
         </div>
       ) : (
         <input
           type="text"
           value={typeof entry.value === 'string' ? entry.value : String(entry.value ?? '')}
           onChange={(event) => onChange({ value: event.target.value })}
-          placeholder="字符串值"
-          className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-100 focus:border-purple-300"
+          placeholder={t('assistant.stringValue')}
+          className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
         />
       )}
     </div>

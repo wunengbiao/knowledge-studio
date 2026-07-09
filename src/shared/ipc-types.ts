@@ -1,4 +1,5 @@
 import type {
+  ActiveModelRef,
   AppSettings,
   Assistant,
   CommunityReport,
@@ -9,6 +10,7 @@ import type {
   KnowledgeBase,
   Message,
   MessageCitation,
+  MessageImage,
   SearchResult
 } from './types'
 
@@ -117,6 +119,7 @@ export interface IpcChannels {
       prompt?: string
       providerId?: string | null
       modelId?: string | null
+      rerankModelRef?: ActiveModelRef | null
       modelParams?: Partial<Assistant['modelParams']>
       knowledgeBaseIds?: string[]
     }
@@ -160,6 +163,7 @@ export interface IpcChannels {
       topK: number
       llmPresetId?: string
       assistantId?: string
+      images?: MessageImage[]
     }
     response: { userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }
   }
@@ -168,12 +172,16 @@ export interface IpcChannels {
   // Message-level actions
   'message:delete': { request: { messageId: string }; response: { deletedIds: string[] } }
   'message:edit': {
-    request: { messageId: string; content: string }
+    request: { messageId: string; content: string; images?: MessageImage[] }
     response: { userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }
   }
   'message:regenerate': {
     request: { assistantMessageId: string }
     response: { assistantMessageId: string; citations: MessageCitation[] }
+  }
+  'message:update': {
+    request: { messageId: string; content: string }
+    response: { message: Message }
   }
 
   // Progress events (main → renderer)
@@ -205,5 +213,9 @@ export interface IpcChannels {
   'chat:stream-done': {
     request: undefined
     response: { assistantMessageId: string; content: string; reasoning: string; createdAt: string }
+  }
+  'chat:abort': {
+    request: { assistantMessageId: string }
+    response: { aborted: boolean }
   }
 }

@@ -6,14 +6,23 @@ import type {
   CustomParamEntry,
   Message,
   MessageCitation,
+  MessageImage,
   SearchResult
 } from '@shared/types'
 import Database from 'better-sqlite3'
 import { net, app } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { AssistantService } from './assistant-service'
-import { buildChatCompletionMessages } from './chat-message-builder'
-import { type KbSummary, shouldRetrieveKnowledge } from './retrieval-judge'
+import {
+  type ChatCompletionMessage,
+  type ChatCompletionToolCall,
+  buildChatCompletionMessages
+} from './chat-message-builder'
+import {
+  KNOWLEDGE_SEARCH_TOOL_NAME,
+  executeKnowledgeSearch,
+  knowledgeSearchToolSchema
+} from './builtin-tools'
 import { SearchService } from './search-service'
 import { SettingsService, resolveCapabilityUrl } from './settings-service'
 
@@ -36,6 +45,16 @@ interface MessageRow {
   created_at: string
   citations: string | null
   reasoning: string | null
+  images: string | null
+}
+
+interface ChatCompletionStreamDelta {
+  tool_calls?: Array<{
+    index: number
+    id?: string
+    type?: 'function'
+    function?: { name?: string; arguments?: string }
+  }>
 }
 
 interface ChatCompletionDelta {
@@ -44,7 +63,8 @@ interface ChatCompletionDelta {
       content?: string
       reasoning_content?: string
       reasoning?: string
-    }
+    } & ChatCompletionStreamDelta
+    finish_reason?: string | null
   }[]
 }
 
@@ -52,6 +72,7 @@ interface ChatModelEndpoint {
   apiUrl: string
   apiKey: string
   model: string
+  supportsImage: boolean
 }
 
 export interface StreamEmitter {
@@ -66,11 +87,28 @@ export interface StreamEmitter {
   onError: (assistantMessageId: string, error: string) => void
 }
 
+const MAX_TOOL_ROUNDS = 3
+
+function parseKnowledgeSearchArgs(args: string): { query: string } {
+  if (!args.trim()) return { query: '' }
+  try {
+    const parsed = JSON.parse(args)
+    if (parsed && typeof parsed.query === 'string') {
+      return { query: parsed.query }
+    }
+  } catch {
+    /* ignore parse errors, return empty query */
+  }
+  return { query: '' }
+}
+
 export class ChatService {
   private db: Database.Database
   private searchService: SearchService
   private settingsService: SettingsService
   private assistantService: AssistantService
+  private abortControllers = new Map<string, AbortController>()
+  private abortReasons = new Map<string, 'user' | 'timeout'>()
 
   constructor() {
     const dataDir = join(app.getPath('userData'), 'rag-data')
@@ -103,6 +141,7 @@ export class ChatService {
         created_at TEXT NOT NULL,
         citations TEXT,
         reasoning TEXT,
+        images TEXT,
         FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
       );
 
@@ -117,6 +156,9 @@ export class ChatService {
     }
     if (!msgCols.some((c) => c.name === 'reasoning')) {
       this.db.exec('ALTER TABLE messages ADD COLUMN reasoning TEXT')
+    }
+    if (!msgCols.some((c) => c.name === 'images')) {
+      this.db.exec('ALTER TABLE messages ADD COLUMN images TEXT')
     }
     const convCols = this.db.prepare("PRAGMA table_info('conversations')").all() as {
       name: string
@@ -219,6 +261,7 @@ export class ChatService {
       topK: number
       llmPresetId?: string
       assistantId?: string
+      images?: MessageImage[]
     },
     emitter?: StreamEmitter
   ): Promise<{
@@ -226,7 +269,7 @@ export class ChatService {
     assistantMessageId: string
     citations: MessageCitation[]
   }> {
-    const { conversationId, message, topK, llmPresetId } = params
+    const { conversationId, message, topK, llmPresetId, images } = params
     const existing = this.get(conversationId)
     if (!existing) throw new Error('对话不存在')
 
@@ -239,7 +282,7 @@ export class ChatService {
     const effectivePresetId =
       llmPresetId !== undefined ? llmPresetId : existing.conversation.llmPresetId
 
-    const userMessage = this.appendMessage(conversationId, 'user', message)
+    const userMessage = this.appendMessage(conversationId, 'user', message, images)
     this.updateKbIds(conversationId, effectiveKbIds)
     this.setAssistant(conversationId, effectiveAssistantId)
     if (llmPresetId !== undefined) {
@@ -251,41 +294,7 @@ export class ChatService {
       this.rename(conversationId, generated)
     }
 
-    let contexts: SearchResult[] = []
-    if (effectiveKbIds.length > 0) {
-      const judgeEndpoint = this.resolveChatEndpoint(assistant, effectivePresetId)
-      const shouldRetrieve = await shouldRetrieveKnowledge({
-        endpoint: judgeEndpoint,
-        history: existing.messages,
-        userMessage: message,
-        kbSummaries: this.getKbSummaries(effectiveKbIds)
-      })
-
-      if (shouldRetrieve) {
-        const perKb = Math.max(2, Math.ceil(topK / effectiveKbIds.length))
-        for (const kbId of effectiveKbIds) {
-          try {
-            const results = await this.searchService.search(kbId, message, 'hybrid', perKb)
-            contexts.push(...results)
-          } catch (e) {
-            console.error('[chat:sendMessage] 检索失败 kbId=', kbId, e)
-          }
-        }
-        contexts.sort((a, b) => b.score - a.score)
-        contexts = contexts.slice(0, topK)
-      } else {
-        console.log('[chat:sendMessage] 判断器决定跳过知识库检索')
-      }
-    }
-
-    const citations: MessageCitation[] = contexts.map((c, i) => ({
-      index: i + 1,
-      chunkId: c.chunkId,
-      docId: c.docId,
-      docTitle: c.docTitle,
-      content: c.content,
-      score: c.score
-    }))
+    const citations: MessageCitation[] = []
 
     const assistantMessageId = uuid()
     const now = new Date().toISOString()
@@ -306,10 +315,12 @@ export class ChatService {
       conversationId,
       userMessage.id,
       message,
-      contexts,
+      effectiveKbIds,
+      topK,
       assistant,
       effectivePresetId,
-      emitter
+      emitter,
+      images
     ).catch((e) => {
       console.error('[chat:sendMessage] LLM stream failed:', e)
       this.removeFailedAssistantMessage(conversationId, assistantMessageId)
@@ -349,7 +360,8 @@ export class ChatService {
   async editUserMessage(
     messageId: string,
     content: string,
-    emitter?: StreamEmitter
+    emitter?: StreamEmitter,
+    images?: MessageImage[]
   ): Promise<{ userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }> {
     const trimmed = content.trim()
     if (!trimmed) throw new Error('消息内容不能为空')
@@ -360,7 +372,9 @@ export class ChatService {
     if (!target) throw new Error('消息不存在')
     if (target.role !== 'user') throw new Error('只能编辑用户消息')
 
-    this.db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(trimmed, messageId)
+    this.db
+      .prepare('UPDATE messages SET content = ?, images = ? WHERE id = ?')
+      .run(trimmed, images && images.length > 0 ? JSON.stringify(images) : null, messageId)
 
     const subsequent = this.db
       .prepare(
@@ -389,13 +403,38 @@ export class ChatService {
       target.conversation_id,
       messageId,
       trimmed,
-      emitter
+      emitter,
+      10,
+      images
     )
     return {
       userMessage,
       assistantMessageId: result.assistantMessageId,
       citations: result.citations
     }
+  }
+
+  updateMessageContent(messageId: string, content: string): Message {
+    const trimmed = content.trim()
+    if (!trimmed) throw new Error('消息内容不能为空')
+
+    const target = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as
+      | MessageRow
+      | undefined
+    if (!target) throw new Error('消息不存在')
+
+    this.db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(trimmed, messageId)
+
+    const now = new Date().toISOString()
+    this.db
+      .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
+      .run(now, target.conversation_id)
+
+    const updatedRow = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as
+      | MessageRow
+      | undefined
+    if (!updatedRow) throw new Error('更新后消息不存在')
+    return this.rowToMessage(updatedRow)
   }
 
   async regenerateAssistantMessage(
@@ -430,11 +469,24 @@ export class ChatService {
       )
       .run(deletedIds.length, now, target.conversation_id)
 
+    const userImages: MessageImage[] | undefined = (() => {
+      if (!userRow.images) return undefined
+      try {
+        const parsed = JSON.parse(userRow.images)
+        if (Array.isArray(parsed)) return parsed
+      } catch {
+        return undefined
+      }
+      return undefined
+    })()
+
     return this.streamResponseForExistingUserMessage(
       target.conversation_id,
       userRow.id,
       userRow.content,
-      emitter
+      emitter,
+      10,
+      userImages
     )
   }
 
@@ -443,7 +495,8 @@ export class ChatService {
     currentUserMessageId: string,
     userMessageContent: string,
     emitter?: StreamEmitter,
-    topK = 10
+    topK = 10,
+    userImages?: MessageImage[]
   ): Promise<{ assistantMessageId: string; citations: MessageCitation[] }> {
     const existing = this.get(conversationId)
     if (!existing) throw new Error('对话不存在')
@@ -452,44 +505,7 @@ export class ChatService {
     const effectiveKbIds = existing.conversation.kbIds
     const effectivePresetId = existing.conversation.llmPresetId
 
-    let contexts: SearchResult[] = []
-    if (effectiveKbIds.length > 0) {
-      const judgeEndpoint = this.resolveChatEndpoint(assistant, effectivePresetId)
-      const shouldRetrieve = await shouldRetrieveKnowledge({
-        endpoint: judgeEndpoint,
-        history: existing.messages,
-        userMessage: userMessageContent,
-        kbSummaries: this.getKbSummaries(effectiveKbIds)
-      })
-
-      if (shouldRetrieve) {
-        const perKb = Math.max(2, Math.ceil(topK / effectiveKbIds.length))
-        for (const kbId of effectiveKbIds) {
-          try {
-            const results = await this.searchService.search(
-              kbId,
-              userMessageContent,
-              'hybrid',
-              perKb
-            )
-            contexts.push(...results)
-          } catch (e) {
-            console.error('[chat:streamResponseForExistingUserMessage] 检索失败 kbId=', kbId, e)
-          }
-        }
-        contexts.sort((a, b) => b.score - a.score)
-        contexts = contexts.slice(0, topK)
-      }
-    }
-
-    const citations: MessageCitation[] = contexts.map((c, i) => ({
-      index: i + 1,
-      chunkId: c.chunkId,
-      docId: c.docId,
-      docTitle: c.docTitle,
-      content: c.content,
-      score: c.score
-    }))
+    const citations: MessageCitation[] = []
 
     const assistantMessageId = uuid()
     const now = new Date().toISOString()
@@ -510,10 +526,12 @@ export class ChatService {
       conversationId,
       currentUserMessageId,
       userMessageContent,
-      contexts,
+      effectiveKbIds,
+      topK,
       assistant,
       effectivePresetId,
-      emitter
+      emitter,
+      userImages
     ).catch((e) => {
       console.error('[chat:streamResponseForExistingUserMessage] LLM stream failed:', e)
       this.removeFailedAssistantMessage(conversationId, assistantMessageId)
@@ -529,66 +547,217 @@ export class ChatService {
     conversationId: string,
     currentUserMessageId: string,
     userMessage: string,
-    contexts: SearchResult[],
+    kbIds: readonly string[],
+    topK: number,
     assistant: Assistant,
     llmPresetId: string | null | undefined,
-    emitter?: StreamEmitter
+    emitter?: StreamEmitter,
+    userImages?: MessageImage[]
   ): Promise<void> {
-    await Promise.resolve()
     const endpoint = this.resolveChatEndpoint(assistant, llmPresetId)
     if (!endpoint.apiUrl || !endpoint.apiKey) {
       throw new Error('未配置 LLM API，请在设置中填写')
     }
 
-    const systemPrompt = this.buildSystemPrompt(contexts, assistant.prompt)
+    const hasKb = kbIds.length > 0
+    const systemPrompt = this.buildSystemPrompt(assistant.prompt, hasKb)
     const history = this.getMessages(conversationId)
-    const messages = buildChatCompletionMessages({
+    const initialMessages = buildChatCompletionMessages({
       systemPrompt,
       history,
       currentUserMessageId,
       currentAssistantMessageId: assistantId,
-      userMessage
+      userMessage,
+      userImages,
+      modelSupportsImage: endpoint.supportsImage
     })
 
-    const response = await net.fetch(endpoint.apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${endpoint.apiKey}`
-      },
-      body: JSON.stringify({
-        model: endpoint.model || 'gpt-4o-mini',
-        messages,
-        stream: true,
-        ...this.enabledModelParams(assistant.modelParams),
-        ...this.customParamsToObject(assistant.modelParams.customParameters)
-      }),
-      signal: AbortSignal.timeout(120000)
-    })
+    const controller = new AbortController()
+    this.abortControllers.set(assistantId, controller)
+    const timeoutId = setTimeout(() => {
+      this.abortReasons.set(assistantId, 'timeout')
+      controller.abort()
+    }, 120000)
+
+    const partialContent: string[] = []
+    const partialReasoning: string[] = []
+    const accumulatedContexts: SearchResult[] = []
+    const tools = hasKb ? [knowledgeSearchToolSchema] : undefined
+    let workingMessages: ChatCompletionMessage[] = initialMessages
+
+    try {
+      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        if (controller.signal.aborted) {
+          throw new Error('aborted')
+        }
+        const isFinalRound = round === MAX_TOOL_ROUNDS
+        const roundTools = isFinalRound ? undefined : tools
+
+        const result = await this.fetchStreamOnce({
+          endpoint,
+          messages: workingMessages,
+          tools: roundTools,
+          assistant,
+          controller,
+          onDelta: (chunk) => {
+            partialContent.push(chunk)
+            emitter?.onDelta(assistantId, chunk)
+          },
+          onReasoning: (chunk) => {
+            partialReasoning.push(chunk)
+            emitter?.onReasoning(assistantId, chunk)
+          }
+        })
+
+        if (result.toolCalls.length > 0 && !isFinalRound) {
+          workingMessages = [
+            ...workingMessages,
+            {
+              role: 'assistant',
+              content: result.content || null,
+              tool_calls: result.toolCalls
+            }
+          ]
+
+          for (const call of result.toolCalls) {
+            if (call.function.name === KNOWLEDGE_SEARCH_TOOL_NAME) {
+              const args = parseKnowledgeSearchArgs(call.function.arguments)
+              const hit = await executeKnowledgeSearch({
+                searchService: this.searchService,
+                kbIds,
+                query: args.query,
+                topK,
+                rerankModelRef: assistant.rerankModelRef
+              })
+              accumulatedContexts.push(...hit.results)
+              workingMessages = [
+                ...workingMessages,
+                { role: 'tool', content: hit.formattedContext, tool_call_id: call.id }
+              ]
+            } else {
+              workingMessages = [
+                ...workingMessages,
+                {
+                  role: 'tool',
+                  content: `错误：未知工具 ${call.function.name}`,
+                  tool_call_id: call.id
+                }
+              ]
+            }
+          }
+
+          const citations: MessageCitation[] = accumulatedContexts.map((c, i) => ({
+            index: i + 1,
+            chunkId: c.chunkId,
+            docId: c.docId,
+            docTitle: c.docTitle,
+            content: c.content,
+            score: c.score
+          }))
+          this.db
+            .prepare('UPDATE messages SET citations = ? WHERE id = ?')
+            .run(JSON.stringify(citations), assistantId)
+
+          continue
+        }
+
+        const fullContent = partialContent.join('')
+        const fullReasoning = partialReasoning.join('')
+        const now = new Date().toISOString()
+        this.db
+          .prepare('UPDATE messages SET content = ?, reasoning = ?, created_at = ? WHERE id = ?')
+          .run(fullContent, fullReasoning, now, assistantId)
+        this.db
+          .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
+          .run(now, conversationId)
+
+        emitter?.onDone(assistantId, fullContent, fullReasoning, now)
+        return
+      }
+    } catch (e) {
+      const reason = this.abortReasons.get(assistantId)
+      if (reason === 'user' || controller.signal.aborted) {
+        const content = partialContent.join('')
+        const reasoning = partialReasoning.join('')
+        const now = new Date().toISOString()
+        this.db
+          .prepare('UPDATE messages SET content = ?, reasoning = ?, created_at = ? WHERE id = ?')
+          .run(content, reasoning, now, assistantId)
+        this.db
+          .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
+          .run(now, conversationId)
+        emitter?.onDone(assistantId, content, reasoning, now)
+        return
+      }
+      if (reason === 'timeout') {
+        throw new Error('LLM 响应超时（120秒），请检查网络或稍后重试')
+      }
+      throw e
+    } finally {
+      clearTimeout(timeoutId)
+      this.abortControllers.delete(assistantId)
+      this.abortReasons.delete(assistantId)
+    }
+  }
+
+  private async fetchStreamOnce(params: {
+    endpoint: ChatModelEndpoint
+    messages: ChatCompletionMessage[]
+    tools: typeof knowledgeSearchToolSchema[] | undefined
+    assistant: Assistant
+    controller: AbortController
+    onDelta: (text: string) => void
+    onReasoning: (text: string) => void
+  }): Promise<{ content: string; reasoning: string; toolCalls: ChatCompletionToolCall[] }> {
+    const { endpoint, messages, tools, assistant, controller, onDelta, onReasoning } = params
+
+    const body: Record<string, unknown> = {
+      model: endpoint.model || 'gpt-4o-mini',
+      messages,
+      stream: true,
+      ...this.enabledModelParams(assistant.modelParams),
+      ...this.customParamsToObject(assistant.modelParams.customParameters)
+    }
+    if (tools && tools.length > 0) {
+      body.tools = tools
+    }
+
+    let response: Response
+    try {
+      response = await net.fetch(endpoint.apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${endpoint.apiKey}`
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      })
+    } catch (_e) {
+      if (controller.signal.aborted) {
+        throw _e
+      }
+      throw new Error('无法连接到 LLM 服务，请检查 API 地址、网络连接或代理设置')
+    }
 
     if (!response.ok) {
       const text = await response.text().catch(() => '')
-      throw new Error(`LLM API 错误 HTTP ${response.status}: ${text.slice(0, 200)}`)
+      throw new Error(this.formatLLMError(response.status, text))
     }
 
     const reader = response.body?.getReader()
     if (!reader) throw new Error('LLM 响应体不可读')
 
     const decoder = new TextDecoder()
-    const { content: fullContent, reasoning: fullReasoning } = await this.readStream(
-      reader,
-      decoder,
-      (chunk) => emitter?.onDelta(assistantId, chunk),
-      (chunk) => emitter?.onReasoning(assistantId, chunk)
-    )
+    return this.readStream(reader, decoder, onDelta, onReasoning)
+  }
 
-    const now = new Date().toISOString()
-    this.db
-      .prepare('UPDATE messages SET content = ?, reasoning = ?, created_at = ? WHERE id = ?')
-      .run(fullContent, fullReasoning, now, assistantId)
-    this.db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, conversationId)
-
-    emitter?.onDone(assistantId, fullContent, fullReasoning, now)
+  abortStream(assistantMessageId: string): boolean {
+    const controller = this.abortControllers.get(assistantMessageId)
+    if (!controller) return false
+    this.abortReasons.set(assistantMessageId, 'user')
+    controller.abort()
+    return true
   }
 
   private resolveChatEndpoint(
@@ -599,7 +768,8 @@ export class ChatService {
     let endpoint: ChatModelEndpoint = {
       apiUrl: settings.llmApiUrl,
       apiKey: settings.llmApiKey,
-      model: settings.llmModel
+      model: settings.llmModel,
+      supportsImage: false
     }
 
     const providerId = assistant.providerId ?? llmPresetId
@@ -614,12 +784,26 @@ export class ChatService {
         endpoint = {
           apiUrl: resolveCapabilityUrl(provider, 'chat'),
           apiKey: provider.apiKey,
-          model: chatModel.id
+          model: chatModel.id,
+          supportsImage: !!chatModel.inputs?.image
         }
       }
     }
 
     return endpoint
+  }
+
+  private formatLLMError(status: number, body: string): string {
+    if (status === 401 || status === 403) {
+      return `API 密钥无效或无权限（HTTP ${status}），请检查 API Key 配置`
+    }
+    if (status === 429) {
+      return '请求过于频繁或额度不足（HTTP 429），请稍后重试'
+    }
+    if (status >= 500) {
+      return `LLM 服务暂时不可用（HTTP ${status}），请稍后重试或检查 API 服务商状态`
+    }
+    return `LLM API 错误 HTTP ${status}: ${body.slice(0, 200)}`
   }
 
   private enabledModelParams(params: AssistantModelParams): Record<string, number> {
@@ -666,9 +850,10 @@ export class ChatService {
     decoder: TextDecoder,
     onChunk: (text: string) => void,
     onReasoning: (text: string) => void
-  ): Promise<{ content: string; reasoning: string }> {
+  ): Promise<{ content: string; reasoning: string; toolCalls: ChatCompletionToolCall[] }> {
     const contentBuffer: string[] = []
     const reasoningBuffer: string[] = []
+    const toolCallAccumulator = new Map<number, ChatCompletionToolCall>()
     let leftover = ''
 
     while (true) {
@@ -699,25 +884,58 @@ export class ChatService {
             reasoningBuffer.push(reasoning)
             onReasoning(reasoning)
           }
+          const toolCallDeltas = delta?.tool_calls
+          if (toolCallDeltas) {
+            for (const tc of toolCallDeltas) {
+              const existing = toolCallAccumulator.get(tc.index)
+              if (!existing) {
+                toolCallAccumulator.set(tc.index, {
+                  id: tc.id ?? '',
+                  type: 'function',
+                  function: {
+                    name: tc.function?.name ?? '',
+                    arguments: tc.function?.arguments ?? ''
+                  }
+                })
+              } else {
+                if (tc.id) existing.id = tc.id
+                if (tc.function?.name) existing.function.name += tc.function.name
+                if (tc.function?.arguments) existing.function.arguments += tc.function.arguments
+              }
+            }
+          }
         } catch {}
       }
     }
-    return { content: contentBuffer.join(''), reasoning: reasoningBuffer.join('') }
+
+    const toolCalls: ChatCompletionToolCall[] = []
+    const sortedIndices = [...toolCallAccumulator.keys()].sort((a, b) => a - b)
+    for (const idx of sortedIndices) {
+      const call = toolCallAccumulator.get(idx)
+      if (call) toolCalls.push(call)
+    }
+    return {
+      content: contentBuffer.join(''),
+      reasoning: reasoningBuffer.join(''),
+      toolCalls
+    }
   }
 
   private appendMessage(
     conversationId: string,
     role: 'user' | 'assistant',
-    content: string
+    content: string,
+    images?: MessageImage[]
   ): Message {
     const id = uuid()
     const now = new Date().toISOString()
+    const imagesJson = images && images.length > 0 ? JSON.stringify(images) : null
     this.db
       .prepare(
-        `INSERT INTO messages (id, conversation_id, role, content, created_at)
-         VALUES (?, ?, ?, ?, ?)`
+        `INSERT INTO messages (id, conversation_id, role, content, created_at, images)
+         VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(id, conversationId, role, content, now)
+      .run(id, conversationId, role, content, now, imagesJson)
     this.db
       .prepare(
         `UPDATE conversations
@@ -725,25 +943,20 @@ export class ChatService {
          WHERE id = ?`
       )
       .run(now, conversationId)
-    return { id, conversationId, role, content, createdAt: now }
+    return {
+      id,
+      conversationId,
+      role,
+      content,
+      createdAt: now,
+      images: images && images.length > 0 ? images : undefined
+    }
   }
 
   private updateKbIds(conversationId: string, kbIds: string[]): void {
     this.db
       .prepare('UPDATE conversations SET kb_ids = ? WHERE id = ?')
       .run(JSON.stringify(kbIds), conversationId)
-  }
-
-  private getKbSummaries(kbIds: string[]): KbSummary[] {
-    if (kbIds.length === 0) return []
-    const placeholders = kbIds.map(() => '?').join(',')
-    const rows = this.db
-      .prepare(`SELECT name, description FROM knowledge_bases WHERE id IN (${placeholders})`)
-      .all(...kbIds) as { name: string; description: string | null }[]
-    return rows.map((row) => ({
-      name: row.name,
-      description: row.description ?? ''
-    }))
   }
 
   private removeFailedAssistantMessage(conversationId: string, assistantMessageId: string): void {
@@ -770,22 +983,13 @@ export class ChatService {
     return `${cleaned.slice(0, 24)}...`
   }
 
-  private buildSystemPrompt(contexts: SearchResult[], assistantPrompt: string): string {
+  private buildSystemPrompt(assistantPrompt: string, hasKb: boolean): string {
     const basePrompt =
       assistantPrompt.trim() || '你是一个有帮助的助手。请用 Markdown 格式回答用户问题。'
-    if (contexts.length === 0) {
-      return basePrompt
-    }
-    const refs = contexts
-      .map((c, i) => `[${i + 1}] 来源: ${c.docTitle}\n${c.content}`)
-      .join('\n\n---\n\n')
+    if (!hasKb) return basePrompt
     return `${basePrompt}
 
-请基于下方参考资料回答用户问题。如果资料无法支持答案，请明确说明。引用资料时使用 [1] [2] 标注。
-
-## 参考资料
-
-${refs}`
+当前对话绑定了知识库。若用户问题需要查阅资料，请调用 \`knowledge_search\` 工具检索，工具返回的资料会以 [1] [2] 编号呈现；回答时使用对应编号标注引用。若用户消息是闲聊、格式化指令或对上文的操作，则不需要调用工具。`
   }
 
   private rowToConversation(row: ConversationRow): Conversation {
@@ -818,6 +1022,15 @@ ${refs}`
         citations = undefined
       }
     }
+    let images: MessageImage[] | undefined
+    if (row.images) {
+      try {
+        const parsed = JSON.parse(row.images)
+        if (Array.isArray(parsed) && parsed.length > 0) images = parsed
+      } catch {
+        images = undefined
+      }
+    }
     return {
       id: row.id,
       conversationId: row.conversation_id,
@@ -825,7 +1038,8 @@ ${refs}`
       content: row.content,
       createdAt: row.created_at,
       citations,
-      reasoning: row.reasoning ?? undefined
+      reasoning: row.reasoning ?? undefined,
+      images
     }
   }
 }

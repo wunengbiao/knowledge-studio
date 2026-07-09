@@ -1,6 +1,7 @@
 import type { MessageCitation } from '@shared/types'
 import { FileText } from 'lucide-react'
 import { type ReactNode, memo, useEffect, useRef, useState } from 'react'
+import { useTranslation } from '../../../i18n'
 
 interface CitationTooltipProps {
   citation: MessageCitation
@@ -20,6 +21,7 @@ interface CitationTooltipProps {
  * neighboring bubble overflow.
  */
 function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ left: number; top: number; placement: 'top' | 'bottom' }>({
     left: 0,
@@ -95,7 +97,7 @@ function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
           style={{ left: pos.left, top: pos.top }}
           role="tooltip"
         >
-          <div className="flex items-start gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50/60">
+          <div className="flex items-start gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50">
             <div className="w-6 h-6 rounded-md bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 text-[11px] font-semibold">
               [{citation.index}]
             </div>
@@ -108,7 +110,7 @@ function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
               </div>
               <div className="flex items-center gap-1 mt-0.5 text-[10.5px] text-gray-400">
                 <FileText className="w-3 h-3" />
-                <span>相关度 {(citation.score * 100).toFixed(1)}%</span>
+                <span>{t('chat.relevance', { n: (citation.score * 100).toFixed(1) })}</span>
               </div>
             </div>
           </div>
@@ -122,8 +124,8 @@ function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
           >
             {citation.content}
           </div>
-          <div className="px-3 py-1.5 border-t border-gray-100 bg-gray-50/60 text-[10.5px] text-gray-400">
-            点击查看完整内容
+          <div className="px-3 py-1.5 border-t border-gray-100 bg-gray-50 text-[10.5px] text-gray-400">
+            {t('citation.clickToViewFull')}
           </div>
         </div>
       )}

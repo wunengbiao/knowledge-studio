@@ -5,6 +5,19 @@ import { v4 as uuid } from 'uuid'
 import { leiden, Graph } from 'leiden-ts'
 import type { GraphEntity, GraphRelation, CommunityReport } from '@shared/types'
 import { extractEntities } from './tokenizer'
+import { embeddingService, type EmbeddingConfig } from './embedding-service'
+
+/**
+ * Decode a Float32 BLOB embedding. Returns null on empty/malformed buffer,
+ * or when dim !== expectedDim (model change -> caller recomputes).
+ */
+function parseEmbedding(buf: Buffer | null, expectedDim: number): number[] | null {
+  if (!buf || buf.length === 0) return null
+  if (buf.length % 4 !== 0) return null
+  const dim = buf.length / 4
+  if (dim !== expectedDim) return null
+  return Array.from(new Float32Array(buf.buffer, buf.byteOffset, dim))
+}
 
 export class GraphService {
   private db: Database.Database
@@ -51,9 +64,17 @@ export class GraphService {
       CREATE INDEX IF NOT EXISTS idx_graph_relations_kb ON graph_relations(kb_id);
       CREATE INDEX IF NOT EXISTS idx_community_reports_kb ON community_reports(kb_id);
     `)
+
+    const cols = this.db.prepare('PRAGMA table_info(graph_entities)').all() as Array<{ name: string }>
+    if (!cols.some((c) => c.name === 'embedding')) {
+      this.db.exec('ALTER TABLE graph_entities ADD COLUMN embedding BLOB')
+    }
   }
 
-  async build(kbId: string): Promise<{ entityCount: number; relationCount: number }> {
+  async build(
+    kbId: string,
+    onProgress?: (current: number, total: number, status: string) => void
+  ): Promise<{ entityCount: number; relationCount: number }> {
     // Clear existing graph data for this KB
     this.db.prepare('DELETE FROM community_reports WHERE kb_id = ?').run(kbId)
     this.db.prepare('DELETE FROM graph_relations WHERE kb_id = ?').run(kbId)
@@ -93,6 +114,8 @@ export class GraphService {
     if (entities.length >= 3) {
       this.detectCommunities(kbId, entities, relations)
     }
+
+    await this.embedEntities(kbId, entities, onProgress)
 
     return { entityCount: entities.length, relationCount: relations.length }
   }
@@ -261,6 +284,117 @@ export class GraphService {
         JSON.stringify([])
       )
     }
+  }
+
+  private async embedEntities(
+    kbId: string,
+    entities: { id: string; name: string; description: string }[],
+    onProgress?: (current: number, total: number, status: string) => void
+  ): Promise<void> {
+    if (entities.length === 0) return
+    const config = this.getKbEmbeddingConfig(kbId)
+    if (!config) return
+    await this.embedAndPersistEntities(entities, config, onProgress)
+  }
+
+  /**
+   * Incremental batched embedding: persist after EACH batch of 64, not
+   * all-at-once at the end. A single embedBatch call on 3000+ entities
+   * discards all progress if the user cancels or the API errors mid-way.
+   */
+  private async embedAndPersistEntities(
+    items: Array<{ id: string; name: string; description: string }>,
+    config: EmbeddingConfig,
+    onProgress?: (current: number, total: number, status: string) => void
+  ): Promise<Map<string, number[]>> {
+    const result = new Map<string, number[]>()
+    if (items.length === 0) return result
+
+    const BATCH = 64
+    const updateStmt = this.db.prepare('UPDATE graph_entities SET embedding = ? WHERE id = ?')
+    const total = items.length
+    onProgress?.(0, total, '正在向量化实体...')
+
+    for (let start = 0; start < total; start += BATCH) {
+      const slice = items.slice(start, start + BATCH)
+      const texts = slice.map((e) => `${e.name}: ${e.description}`)
+      const embeddings = await embeddingService.embedBatch(texts, config)
+      const persistBatch = this.db.transaction(() => {
+        for (let i = 0; i < slice.length; i++) {
+          const emb = embeddings[i]
+          if (emb && emb.length > 0) {
+            updateStmt.run(Buffer.from(new Float32Array(emb).buffer), slice[i].id)
+            result.set(slice[i].id, emb)
+          }
+        }
+      })
+      persistBatch()
+      const done = Math.min(start + BATCH, total)
+      onProgress?.(done, total, `正在向量化实体 ${done}/${total}`)
+    }
+    return result
+  }
+
+  private getKbEmbeddingConfig(kbId: string): EmbeddingConfig | null {
+    const row = this.db
+      .prepare('SELECT embedding_api_url, embedding_api_key, embedding_model FROM knowledge_bases WHERE id = ?')
+      .get(kbId) as
+      | { embedding_api_url: string; embedding_api_key: string; embedding_model: string }
+      | undefined
+    if (!row) return null
+    return {
+      embeddingApiUrl: row.embedding_api_url,
+      embeddingApiKey: row.embedding_api_key,
+      embeddingModel: row.embedding_model
+    }
+  }
+
+  async ensureEntityEmbeddings(
+    kbId: string,
+    config: EmbeddingConfig,
+    expectedDim: number,
+    onProgress?: (current: number, total: number, status: string) => void
+  ): Promise<
+    Array<{
+      id: string
+      name: string
+      type: string
+      description: string
+      communityId: number | null
+      embedding: number[] | null
+    }>
+  > {
+    const rows = this.db
+      .prepare(
+        'SELECT id, name, type, description, community_id, embedding FROM graph_entities WHERE kb_id = ?'
+      )
+      .all(kbId) as Array<{
+      id: string
+      name: string
+      type: string
+      description: string
+      community_id: number | null
+      embedding: Buffer | null
+    }>
+
+    const parsed = rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      description: r.description,
+      communityId: r.community_id,
+      embedding: parseEmbedding(r.embedding, expectedDim)
+    }))
+
+    const missing = parsed.filter((e) => e.embedding === null)
+    if (missing.length === 0) return parsed
+
+    const embedded = await this.embedAndPersistEntities(missing, config, onProgress)
+    for (const e of parsed) {
+      const emb = embedded.get(e.id)
+      if (emb) e.embedding = emb
+    }
+    return parsed
   }
 
   getEntities(kbId: string): GraphEntity[] {

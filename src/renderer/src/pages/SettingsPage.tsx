@@ -2,6 +2,9 @@ import type {
   ActiveModelRef,
   AppSettings,
   Assistant,
+  CodeFont,
+  CodeFontSize,
+  CodeTheme,
   Provider,
   ProviderKind,
   ProviderModel
@@ -12,17 +15,21 @@ import {
   Check,
   ChevronRight,
   FlaskConical,
+  Image as ImageIcon,
   Key,
+  Languages,
   Layers,
   ListOrdered,
   Loader2,
   MessageSquare,
+  Palette,
   Plus,
   Save,
   ScanText,
   Search,
   Sparkles,
   Trash2,
+  Type,
   Upload,
   User as UserIcon,
   Wifi,
@@ -34,6 +41,8 @@ import {
   type AssistantFormValue,
   AssistantSettingsPanel
 } from '../components/assistant/AssistantSettingsPanel'
+import { MessageMarkdown } from '../components/chat/markdown/MessageMarkdown'
+import { useTranslation, type TranslationKey } from '../i18n'
 import { useAssistantStore } from '../stores/assistant-store'
 import { useKBStore } from '../stores/kb-store'
 
@@ -42,7 +51,7 @@ type FetchCapabilityFilter = Capability | 'all'
 
 function SettingGroup({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-gray-200/80 bg-white">
+    <div className="rounded-xl border border-gray-200 bg-white">
       <div className="divide-y divide-gray-100">{children}</div>
     </div>
   )
@@ -109,12 +118,83 @@ function Toggle({ on, onChange }: { on: boolean | number; onChange: () => void }
 const inputCls =
   'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
 
+const CODE_THEMES: CodeTheme[] = [
+  'monokai',
+  'github',
+  'github-dark',
+  'dracula',
+  'atom-one-dark',
+  'atom-one-light',
+  'vs',
+  'vs2015'
+]
+
+const CODE_THEME_LABELS: Record<CodeTheme, string> = {
+  monokai: 'Monokai',
+  github: 'GitHub',
+  'github-dark': 'GitHub Dark',
+  dracula: 'Dracula',
+  'atom-one-dark': 'Atom One Dark',
+  'atom-one-light': 'Atom One Light',
+  vs: 'Visual Studio',
+  vs2015: 'Visual Studio 2015'
+}
+
+const CODE_FONTS: CodeFont[] = [
+  'system',
+  'menlo',
+  'consolas',
+  'monaco',
+  'courier',
+  'jetbrains',
+  'firacode',
+  'sfmono'
+]
+
+const CODE_FONT_LABELS: Record<CodeFont, string> = {
+  system: 'System Default',
+  menlo: 'Menlo',
+  consolas: 'Consolas',
+  monaco: 'Monaco',
+  courier: 'Courier New',
+  jetbrains: 'JetBrains Mono',
+  firacode: 'Fira Code',
+  sfmono: 'SF Mono'
+}
+
+const CODE_FONT_SIZES: CodeFontSize[] = ['xs', 'sm', 'md', 'lg', 'xl']
+
+const CODE_FONT_SIZE_LABELS: Record<CodeFontSize, string> = {
+  xs: 'Extra Small',
+  sm: 'Small',
+  md: 'Default',
+  lg: 'Large',
+  xl: 'Extra Large'
+}
+
+const CODE_THEME_DEMO = `\`\`\`typescript
+// User profile service
+import { Database } from './db'
+
+interface User {
+  id: number
+  name: string
+  email?: string
+}
+
+export async function fetchUser(db: Database, id: number): Promise<User | null> {
+  const row = await db.query('SELECT * FROM users WHERE id = ?', [id])
+  if (!row) return null
+  return { id: row.id, name: row.name, email: row.email }
+}
+\`\`\``
+
 const PROVIDER_KIND_BADGE: Record<ProviderKind, string> = {
   deepseek: 'DeepSeek',
   nvidia: 'NVIDIA',
   mistral: 'Mistral',
   gemini: 'Gemini',
-  custom: '自定义'
+  custom: 'Custom'
 }
 
 const PROVIDER_KIND_COLOR: Record<ProviderKind, string> = {
@@ -131,7 +211,7 @@ const CAPABILITY_META: Record<
 > = {
   chat: {
     label: 'Chat',
-    chipClass: 'border-purple-200 bg-purple-50 text-purple-700',
+    chipClass: 'border-slate-200 bg-slate-50 text-slate-700',
     icon: MessageSquare
   },
   embedding: {
@@ -146,30 +226,65 @@ const CAPABILITY_META: Record<
   }
 }
 
+type ModelInput = 'text' | 'image'
+
+const INPUTS_META: Record<
+  ModelInput,
+  { label: string; chipClass: string; icon: React.ComponentType<{ className?: string }> }
+> = {
+  text: {
+    label: 'Text',
+    chipClass: 'border-slate-200 bg-slate-50 text-slate-600',
+    icon: Type
+  },
+  image: {
+    label: 'Image',
+    chipClass: 'border-purple-200 bg-purple-50 text-purple-700',
+    icon: ImageIcon
+  }
+}
+
 const FETCH_FILTERS: { key: FetchCapabilityFilter; label: string }[] = [
-  { key: 'all', label: '全部' },
+  { key: 'all', label: 'All' },
   { key: 'chat', label: 'Chat' },
   { key: 'embedding', label: 'Embedding' },
   { key: 'rerank', label: 'ReRank' }
 ]
 
-type Section = 'general' | 'providers' | 'models' | 'assistants' | 'ocr' | 'proxy'
+type Section = 'general' | 'providers' | 'models' | 'assistants' | 'ocr' | 'proxy' | 'ui' | 'language'
 
-const NAV_GROUPS: {
-  title: string
-  items: { key: Section; label: string; icon: React.ComponentType<{ className?: string }> }[]
-}[] = [
-  { title: '通用', items: [{ key: 'general', label: '个人资料', icon: UserIcon }] },
+type NavGroup = {
+  titleKey: TranslationKey
+  items: { key: Section; labelKey: TranslationKey; icon: React.ComponentType<{ className?: string }> }[]
+}
+
+const NAV_GROUPS: NavGroup[] = [
   {
-    title: '模型',
+    titleKey: 'settings.nav.groupGeneral',
     items: [
-      { key: 'providers', label: '模型提供商', icon: Sparkles },
-      { key: 'models', label: '默认模型', icon: MessageSquare },
-      { key: 'assistants', label: '助手设置', icon: Bot }
+      { key: 'general', labelKey: 'settings.nav.profile', icon: UserIcon },
+      { key: 'language', labelKey: 'settings.nav.language', icon: Languages }
     ]
   },
-  { title: '服务', items: [{ key: 'ocr', label: 'PDF OCR', icon: ScanText }] },
-  { title: '应用设置', items: [{ key: 'proxy', label: '网络代理', icon: Wifi }] }
+  {
+    titleKey: 'settings.nav.groupModels',
+    items: [
+      { key: 'providers', labelKey: 'settings.nav.providers', icon: Sparkles },
+      { key: 'models', labelKey: 'settings.nav.defaultModels', icon: MessageSquare },
+      { key: 'assistants', labelKey: 'settings.nav.assistants', icon: Bot }
+    ]
+  },
+  {
+    titleKey: 'settings.nav.groupServices',
+    items: [{ key: 'ocr', labelKey: 'settings.nav.ocr', icon: ScanText }]
+  },
+  {
+    titleKey: 'settings.nav.groupApp',
+    items: [
+      { key: 'ui', labelKey: 'settings.nav.display', icon: Palette },
+      { key: 'proxy', labelKey: 'settings.nav.proxy', icon: Wifi }
+    ]
+  }
 ]
 
 function Sidebar({
@@ -181,23 +296,24 @@ function Sidebar({
   onSelect: (s: Section) => void
   onBack: () => void
 }) {
+  const { t } = useTranslation()
   return (
-    <aside className="w-[220px] flex-shrink-0 border-r border-gray-200/80 bg-gray-50/40 flex flex-col">
-      <div className="px-3 py-3.5 flex items-center gap-2 border-b border-gray-200/70">
+    <aside className="w-[220px] flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
+      <div className="px-3 py-3.5 flex items-center gap-2 border-b border-gray-200">
         <button
           onClick={onBack}
-          className="p-1 rounded-md hover:bg-gray-200/70 transition-colors"
-          title="返回"
+          className="p-1 rounded-md hover:bg-gray-200 transition-colors"
+          title={t('common.back')}
         >
           <ArrowLeft className="w-4 h-4 text-gray-500" />
         </button>
-        <h1 className="text-sm font-semibold text-gray-800">设置</h1>
+        <h1 className="text-sm font-semibold text-gray-800">{t('settings.title')}</h1>
       </div>
       <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-3">
         {NAV_GROUPS.map((group) => (
-          <div key={group.title}>
+          <div key={group.titleKey}>
             <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-normal text-gray-400">
-              {group.title}
+              {t(group.titleKey)}
             </div>
             <div className="space-y-0.5">
               {group.items.map((item) => {
@@ -209,12 +325,12 @@ function Sidebar({
                     onClick={() => onSelect(item.key)}
                     className={`w-full flex items-center gap-2 h-8 px-2.5 rounded-[10px] text-sm transition-colors ${
                       isActive
-                        ? 'bg-gray-200/80 font-medium text-gray-900'
-                        : 'text-gray-600 hover:bg-gray-200/50'
+                        ? 'bg-gray-200 font-medium text-gray-900'
+                        : 'text-gray-600 hover:bg-gray-200'
                     }`}
                   >
                     <Icon className="w-4 h-4" />
-                    <span>{item.label}</span>
+                    <span>{t(item.labelKey)}</span>
                   </button>
                 )
               })}
@@ -237,6 +353,7 @@ function PaneHeader({
   saved: boolean
   onSave: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className="flex items-start justify-between gap-4 mb-5">
       <div>
@@ -250,12 +367,12 @@ function PaneHeader({
         {saved ? (
           <>
             <Check className="w-3.5 h-3.5" />
-            已保存
+            {t('common.saved')}
           </>
         ) : (
           <>
             <Save className="w-3.5 h-3.5" />
-            保存
+            {t('common.save')}
           </>
         )}
       </button>
@@ -274,12 +391,13 @@ function ProviderListItem({
   isActiveAnywhere: boolean
   onClick: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <button
       onClick={onClick}
       data-selected={selected || undefined}
       className={`w-full group flex items-center gap-2.5 h-10 px-2.5 rounded-[10px] text-sm transition-colors ${
-        selected ? 'bg-gray-200/80 text-gray-900' : 'text-gray-700 hover:bg-gray-200/50'
+        selected ? 'bg-gray-200 text-gray-900' : 'text-gray-700 hover:bg-gray-200'
       }`}
     >
       <span
@@ -289,7 +407,7 @@ function ProviderListItem({
       </span>
       <span className="flex-1 min-w-0 text-left truncate">{provider.name}</span>
       {isActiveAnywhere && (
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="正在使用" />
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title={t('common.inUse')} />
       )}
       <ChevronRight
         className={`w-3.5 h-3.5 text-gray-300 ${selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
@@ -313,14 +431,28 @@ function ModelRow({
   onDelete: () => void
   onTest: (cap: Capability) => void
 }) {
+  const { t } = useTranslation()
   const toggleCapability = (cap: Capability) => {
-    onChange({
-      capabilities: { ...model.capabilities, [cap]: !model.capabilities[cap] }
-    })
+    const nextCaps = { ...model.capabilities, [cap]: !model.capabilities[cap] }
+    if (cap === 'chat') {
+      if (nextCaps.chat) {
+        onChange({
+          capabilities: nextCaps,
+          inputs: model.inputs ?? { text: true, image: false }
+        })
+      } else {
+        onChange({ capabilities: nextCaps, inputs: undefined })
+      }
+    } else {
+      onChange({ capabilities: nextCaps })
+    }
   }
-  const enabledCaps = (Object.keys(CAPABILITY_META) as Capability[]).filter(
-    (c) => model.capabilities[c]
-  )
+  const toggleInput = (input: ModelInput) => {
+    if (!model.capabilities.chat) return
+    const current = model.inputs ?? { text: true, image: false }
+    onChange({ inputs: { ...current, [input]: !current[input] } })
+  }
+  const enabledCaps = (Object.keys(CAPABILITY_META) as Capability[]).filter((c) => model.capabilities[c])
   return (
     <div className="px-5 py-3 space-y-2.5">
       <div className="flex items-center gap-2">
@@ -328,13 +460,13 @@ function ModelRow({
           type="text"
           value={model.id}
           onChange={(e) => onChange({ id: e.target.value })}
-          placeholder="模型 ID,如 deepseek-chat"
+          placeholder={t('settings.modelIdPlaceholder')}
           className={inputCls + ' flex-1 font-mono text-[13px]'}
         />
         <button
           onClick={onDelete}
           className="p-1.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-          title="删除"
+          title={t('common.delete')}
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
@@ -369,20 +501,42 @@ function ModelRow({
                   onClick={() => onTest(cap)}
                   disabled={testing[cap]}
                   className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                  title={`测试 ${meta.label}`}
+                  title={`${t('common.test')} ${meta.label}`}
                 >
                   {testing[cap] ? (
                     <Loader2 className="w-3 h-3 animate-spin" />
                   ) : (
                     <FlaskConical className="w-3 h-3" />
                   )}
-                  测试
+                  {t('common.test')}
                 </button>
               )
             })}
           </div>
         )}
       </div>
+      {model.capabilities.chat && (
+        <div className="flex flex-wrap items-center gap-1.5 pl-1">
+          <span className="text-[11px] text-gray-400 mr-1">Inputs:</span>
+          {(Object.keys(INPUTS_META) as ModelInput[]).map((input) => {
+            const meta = INPUTS_META[input]
+            const on = model.inputs?.[input] ?? input === 'text'
+            const Icon = meta.icon
+            return (
+              <button
+                key={input}
+                onClick={() => toggleInput(input)}
+                className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                  on ? meta.chipClass : 'border-gray-200 bg-white text-gray-400 hover:bg-gray-50'
+                }`}
+              >
+                <Icon className="w-3 h-3" />
+                {meta.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
       {testResult && <TestResultBanner result={testResult} />}
     </div>
   )
@@ -403,6 +557,7 @@ function DefaultModelsCard({
   form: AppSettings
   setForm: React.Dispatch<React.SetStateAction<AppSettings | null>>
 }) {
+  const { t } = useTranslation()
   const rows: {
     cap: Capability
     key: 'activeChatModel' | 'activeEmbeddingModel' | 'activeRerankModel'
@@ -411,17 +566,17 @@ function DefaultModelsCard({
     {
       cap: 'chat',
       key: 'activeChatModel',
-      description: '用于对话回答与 GraphRAG 的默认大语言模型。'
+      description: t('settings.capabilityChatDesc')
     },
     {
       cap: 'embedding',
       key: 'activeEmbeddingModel',
-      description: '检索阶段对查询与片段进行向量化的默认模型。'
+      description: t('settings.capabilityEmbeddingDesc')
     },
     {
       cap: 'rerank',
       key: 'activeRerankModel',
-      description: '对召回结果重新排序的默认模型(需在上方开启 ReRank)。'
+      description: t('settings.capabilityRerankDesc')
     }
   ]
 
@@ -441,10 +596,8 @@ function DefaultModelsCard({
   return (
     <SettingGroup>
       <div className="px-5 py-3 border-b border-gray-100">
-        <div className="text-sm font-medium text-gray-800">默认模型</div>
-        <div className="mt-0.5 text-xs text-gray-400">
-          为每种能力指定默认模型,新会话与未指定模型的检索流程将使用这里的选择。
-        </div>
+        <div className="text-sm font-medium text-gray-800">{t('settings.defaultModels')}</div>
+        <div className="mt-0.5 text-xs text-gray-400">{t('settings.defaultModelsDesc')}</div>
       </div>
       {rows.map((row) => {
         const meta = CAPABILITY_META[row.cap]
@@ -481,7 +634,7 @@ function DefaultModelsCard({
                 onChange={(e) => handleSelect(row.key, e.target.value)}
                 className={inputCls}
               >
-                <option value="">未指定</option>
+                <option value="">{t('common.notSpecified')}</option>
                 {options.map((g) => (
                   <optgroup key={g.providerName} label={g.providerName}>
                     {g.models.map((m) => (
@@ -494,7 +647,7 @@ function DefaultModelsCard({
               </select>
             ) : (
               <div className="text-xs text-gray-400 px-1">
-                尚未在任一提供商中勾选 {meta.label} 能力。
+                {t('settings.noCapability', { cap: meta.label })}
               </div>
             )}
           </SettingRow>
@@ -504,8 +657,44 @@ function DefaultModelsCard({
   )
 }
 
+function LanguagePane() {
+  const { t, language, setLanguage } = useTranslation()
+  const options: { value: 'zh' | 'en' | 'ja' | 'ko'; label: string; desc: string }[] = [
+    { value: 'zh', label: t('settings.langZh'), desc: '中文' },
+    { value: 'en', label: t('settings.langEn'), desc: 'English' },
+    { value: 'ja', label: t('settings.langJa'), desc: '日本語' },
+    { value: 'ko', label: t('settings.langKo'), desc: '한국어' }
+  ]
+  return (
+    <div className="space-y-4 px-1">
+      <div>
+        <h2 className="text-base font-semibold text-gray-900">{t('settings.languageSection')}</h2>
+        <p className="text-sm text-gray-500 mt-1">{t('settings.languageDesc')}</p>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {options.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => setLanguage(opt.value)}
+            className={`flex flex-col items-start gap-1 p-4 rounded-xl border transition-all text-left ${
+              language === opt.value
+                ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100 dark:bg-blue-950/40 dark:ring-blue-900/50'
+                : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            <span className="text-sm font-medium text-gray-900">{opt.label}</span>
+            <span className="text-xs text-gray-500">{opt.desc}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function SettingsPage() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const { settings, knowledgeBases, loadSettings, loadKnowledgeBases, updateSettings } =
     useKBStore()
   const { assistants, loadAssistants, createAssistant, updateAssistant, deleteAssistant } =
@@ -539,7 +728,17 @@ export function SettingsPage() {
     { id: string; name?: string; ownedBy?: string }[]
   >([])
   const [pickerState, setPickerState] = useState<
-    Record<string, { selected: boolean; chat: boolean; embedding: boolean; rerank: boolean }>
+    Record<
+      string,
+      {
+        selected: boolean
+        chat: boolean
+        embedding: boolean
+        rerank: boolean
+        text: boolean
+        image: boolean
+      }
+    >
   >({})
   const [fetchSearch, setFetchSearch] = useState('')
   const [fetchCapabilityFilter, setFetchCapabilityFilter] = useState<FetchCapabilityFilter>('all')
@@ -613,7 +812,7 @@ export function SettingsPage() {
     setAssistantPanelOpen(false)
   }
 
-  const update = (key: keyof AppSettings, value: string | number) => {
+  const update = (key: keyof AppSettings, value: string | number | boolean) => {
     setForm((prev) => (prev ? { ...prev, [key]: value } : null))
   }
 
@@ -648,7 +847,8 @@ export function SettingsPage() {
     if (!form) return
     const newModel: ProviderModel = {
       id: '',
-      capabilities: { chat: true, embedding: false, rerank: false }
+      capabilities: { chat: true, embedding: false, rerank: false },
+      inputs: { text: true, image: false }
     }
     setForm({
       ...form,
@@ -681,7 +881,7 @@ export function SettingsPage() {
     if (!form) return
     const newProvider: Provider = {
       id: crypto.randomUUID(),
-      name: '自定义',
+      name: t('common.custom'),
       kind: 'custom',
       isBuiltIn: false,
       apiKey: '',
@@ -719,7 +919,7 @@ export function SettingsPage() {
     setTestingMap((s) => ({
       ...s,
       [model.id]: {
-        ...(s[model.id] ?? { chat: false, embedding: false, rerank: false }),
+        ...(s[model.id]         ?? { chat: false, embedding: false, rerank: false }),
         [cap]: true
       }
     }))
@@ -748,13 +948,13 @@ export function SettingsPage() {
     } catch (e: any) {
       setTestResultMap((s) => ({
         ...s,
-        [testKey]: { success: false, message: e.message || '测试失败' }
+        [testKey]: { success: false, message: e.message || t('settings.testFailed') }
       }))
     } finally {
       setTestingMap((s) => ({
         ...s,
         [model.id]: {
-          ...(s[model.id] ?? { chat: false, embedding: false, rerank: false }),
+          ...(s[model.id]         ?? { chat: false, embedding: false, rerank: false }),
           [cap]: false
         }
       }))
@@ -783,7 +983,7 @@ export function SettingsPage() {
         models: { id: string; name?: string; ownedBy?: string }[]
       }
       if (!res.success) {
-        setFetchError(res.message || '获取失败')
+        setFetchError(res.message || t('settings.fetchFailed'))
         return
       }
       const existingIds = new Set(provider.models.map((m) => m.id))
@@ -791,21 +991,32 @@ export function SettingsPage() {
       setFetchedModels(fresh)
       const init: Record<
         string,
-        { selected: boolean; chat: boolean; embedding: boolean; rerank: boolean }
+        {
+          selected: boolean
+          chat: boolean
+          embedding: boolean
+          rerank: boolean
+          text: boolean
+          image: boolean
+        }
       > = {}
       for (const m of fresh) {
         const isEmbed = /embed/i.test(m.id)
         const isRerank = /rerank|reranker|ranking/i.test(m.id)
+        const isImage = /vision|vl|gpt-4o|claude-3|gemini/i.test(m.id)
+        const isChat = !isEmbed && !isRerank
         init[m.id] = {
           selected: false,
-          chat: !isEmbed && !isRerank,
+          chat: isChat,
           embedding: isEmbed,
-          rerank: isRerank
+          rerank: isRerank,
+          text: isChat,
+          image: isChat && isImage
         }
       }
       setPickerState(init)
     } catch (e: any) {
-      setFetchError(e.message || '获取失败')
+      setFetchError(e.message || t('settings.fetchFailed'))
     } finally {
       setFetching(false)
     }
@@ -820,7 +1031,8 @@ export function SettingsPage() {
       toAdd.push({
         id: m.id,
         name: m.name,
-        capabilities: { chat: s.chat, embedding: s.embedding, rerank: s.rerank }
+        capabilities: { chat: s.chat, embedding: s.embedding, rerank: s.rerank },
+        ...(s.chat ? { inputs: { text: s.text, image: s.image } } : {})
       })
     }
     if (toAdd.length === 0) {
@@ -851,7 +1063,7 @@ export function SettingsPage() {
     try {
       setMistralTestResult(await window.electronAPI.invoke('settings:test-mistral', form))
     } catch (e: any) {
-      setMistralTestResult({ success: false, message: e.message || '测试失败' })
+      setMistralTestResult({ success: false, message: e.message || t('settings.testFailed') })
     } finally {
       setTestingMistral(false)
     }
@@ -877,7 +1089,7 @@ export function SettingsPage() {
     const img = new Image()
     await new Promise<void>((resolve, reject) => {
       img.onload = () => resolve()
-      img.onerror = () => reject(new Error('图片加载失败'))
+      img.onerror = () => reject(new Error(t('settings.imageLoadFailed')))
       img.src = dataUrl
     })
 
@@ -903,33 +1115,38 @@ export function SettingsPage() {
   const paneMeta = useMemo<Record<Section, { title: string; description?: string }>>(
     () => ({
       general: {
-        title: '个人资料',
-        description: '自定义你的头像,将显示在对话中你的消息旁。'
+        title: t('settings.nav.profile'),
+        description: t('settings.paneDesc.general')
       },
       providers: {
-        title: '模型提供商',
-        description:
-          '为每个提供商配置 API Host 和 Key,然后在统一的模型列表中勾选每个模型支持的能力。'
+        title: t('settings.nav.providers'),
+        description: t('settings.paneDesc.providers')
       },
       models: {
-        title: '默认模型',
-        description:
-          '为 Chat / Embedding / ReRank 指定全局默认模型,所有新对话与检索流程都会使用这些默认值。'
+        title: t('settings.nav.defaultModels'),
+        description: t('settings.paneDesc.models')
       },
       assistants: {
-        title: '助手设置',
-        description: '配置助手提示词、模型参数和默认知识库,在 Chat 页面切换选择。'
+        title: t('settings.nav.assistants'),
+        description: t('settings.paneDesc.assistants')
       },
       ocr: {
-        title: 'PDF OCR',
-        description: '配置后,PDF 通过 Mistral OCR 转 Markdown;未配置则降级为纯文本提取。'
+        title: t('settings.nav.ocr'),
+        description: t('settings.paneDesc.ocr')
       },
       proxy: {
-        title: '网络代理',
-        description: '通过 HTTP 代理访问外部 API。'
+        title: t('settings.nav.proxy'),
+        description: t('settings.proxyDesc')
+      },
+      ui: {
+        title: t('settings.uiTitle'),
+        description: t('settings.paneDesc.ui')
+      },
+      language: {
+        title: t('settings.nav.language')
       }
     }),
-    []
+    [t]
   )
 
   if (!form) {
@@ -984,8 +1201,8 @@ export function SettingsPage() {
               />
               <SettingGroup>
                 <SettingRow
-                  label="头像"
-                  description="JPG / PNG / WebP,将自动压缩为 128×128。"
+                  label={t('settings.avatar')}
+                  description={t('settings.avatarDesc')}
                   align="start"
                 >
                   <div className="flex items-center gap-4">
@@ -993,7 +1210,7 @@ export function SettingsPage() {
                       {form.userAvatar ? (
                         <img
                           src={form.userAvatar}
-                          alt="头像"
+                          alt={t('settings.avatar')}
                           className="w-full h-full object-cover"
                         />
                       ) : (
@@ -1006,7 +1223,7 @@ export function SettingsPage() {
                         className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors"
                       >
                         <Upload className="w-3 h-3" />
-                        {form.userAvatar ? '更换头像' : '上传头像'}
+                        {form.userAvatar ? t('settings.changeAvatar') : t('settings.uploadAvatar')}
                       </button>
                       {form.userAvatar && (
                         <button
@@ -1014,14 +1231,14 @@ export function SettingsPage() {
                           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
                         >
                           <Trash2 className="w-3 h-3" />
-                          移除
+                          {t('common.remove')}
                         </button>
                       )}
                     </div>
                   </div>
                 </SettingRow>
               </SettingGroup>
-              <p className="text-xs text-gray-400 px-1">点击右上角"保存"以应用更改。</p>
+              <p className="text-xs text-gray-400 px-1">{t('settings.saveHint')}</p>
             </div>
           )}
 
@@ -1029,7 +1246,7 @@ export function SettingsPage() {
             <div className="min-h-0 flex-1 flex flex-col overflow-hidden">
               <div className="flex flex-1 min-h-0 gap-5">
                 <div className="w-[200px] shrink-0 min-h-0 flex flex-col gap-3">
-                  <div className="rounded-xl border border-gray-200/80 bg-white flex-1 min-h-0 flex flex-col overflow-hidden">
+                  <div className="rounded-xl border border-gray-200 bg-white flex-1 min-h-0 flex flex-col overflow-hidden">
                     <div className="flex-1 min-h-0 overflow-y-auto p-1.5 space-y-0.5">
                       {form.providers.map((p) => (
                         <ProviderListItem
@@ -1043,10 +1260,10 @@ export function SettingsPage() {
                     </div>
                     <button
                       onClick={addCustomProvider}
-                      className="flex items-center justify-center gap-1.5 h-9 text-xs text-gray-600 border-t border-gray-200/80 hover:bg-gray-50"
+                      className="flex items-center justify-center gap-1.5 h-9 text-xs text-gray-600 border-t border-gray-200 hover:bg-gray-50"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      添加自定义提供商
+                      {t('settings.addCustomProvider')}
                     </button>
                   </div>
                 </div>
@@ -1073,8 +1290,12 @@ export function SettingsPage() {
                           />
                         )}
                         <div className="text-xs text-gray-400">
-                          {PROVIDER_KIND_BADGE[selectedProvider.kind]}
-                          {selectedProvider.isBuiltIn ? ' · 内置' : ' · 自定义'}
+                          {selectedProvider.kind === 'custom'
+                            ? t('common.custom')
+                            : PROVIDER_KIND_BADGE[selectedProvider.kind]}
+                          {selectedProvider.isBuiltIn
+                            ? ` · ${t('common.builtin')}`
+                            : ` · ${t('common.custom')}`}
                         </div>
                       </div>
                       {!selectedProvider.isBuiltIn && (
@@ -1082,13 +1303,13 @@ export function SettingsPage() {
                           onClick={deleteSelectedProvider}
                           className="text-xs px-2.5 py-1 rounded border border-red-100 text-red-500 hover:bg-red-50"
                         >
-                          删除
+                          {t('common.delete')}
                         </button>
                       )}
                     </div>
                     <SettingRow
-                      label="API Host"
-                      description="基础地址,Chat / Embedding / ReRank 自动拼接路径。"
+                      label={t('settings.apiHost')}
+                      description={t('settings.apiHostDesc')}
                     >
                       <input
                         type="text"
@@ -1115,9 +1336,11 @@ export function SettingsPage() {
                   <SettingGroup>
                     <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100">
                       <div className="min-w-0">
-                        <div className="text-sm font-medium text-gray-800">模型列表</div>
+                        <div className="text-sm font-medium text-gray-800">
+                          {t('settings.modelList')}
+                        </div>
                         <div className="mt-0.5 text-xs text-gray-400">
-                          每个模型可同时承担多种能力,只勾选该模型实际支持的项。
+                          {t('settings.modelListDesc')}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1127,20 +1350,20 @@ export function SettingsPage() {
                           className="flex items-center gap-1 text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                         >
                           <Sparkles className="w-3 h-3" />
-                          从服务获取
+                          {t('settings.fetchFromService')}
                         </button>
                         <button
                           onClick={addModel}
                           className="flex items-center gap-1 text-xs px-2.5 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-50"
                         >
                           <Plus className="w-3 h-3" />
-                          添加模型
+                          {t('settings.addModel')}
                         </button>
                       </div>
                     </div>
                     {selectedProvider.models.length === 0 ? (
                       <div className="px-5 py-8 text-center text-xs text-gray-400">
-                        暂无模型,点击右上角"添加模型"。
+                        {t('settings.noModels')}
                       </div>
                     ) : (
                       <div className="divide-y divide-gray-100">
@@ -1154,7 +1377,7 @@ export function SettingsPage() {
                             null
                           return (
                             <ModelRow
-                              key={`${m.id}-${idx}`}
+                              key={idx}
                               model={m}
                               testing={
                                 testingMap[m.id] ?? {
@@ -1187,7 +1410,7 @@ export function SettingsPage() {
                   >
                     <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
                       <div className="text-sm font-medium text-gray-800">
-                        从 {selectedProvider.name} 获取模型列表
+                        {t('settings.fetchTitle', { name: selectedProvider.name })}
                       </div>
                       <button
                         onClick={() => setFetchOpen(false)}
@@ -1201,7 +1424,7 @@ export function SettingsPage() {
                       {fetching ? (
                         <div className="flex items-center justify-center py-12 text-sm text-gray-500">
                           <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                          正在获取模型列表...
+                          {t('settings.fetchingModels')}
                         </div>
                       ) : fetchError ? (
                         <div className="rounded-lg bg-red-50 border border-red-100 text-red-600 text-xs px-3 py-2">
@@ -1209,18 +1432,18 @@ export function SettingsPage() {
                         </div>
                       ) : fetchedModels.length === 0 ? (
                         <div className="py-12 text-center text-xs text-gray-400">
-                          没有可添加的新模型(可能已全部添加)。
+                          {t('settings.noNewModels')}
                         </div>
                       ) : (
                         <div className="space-y-3">
-                          <div className="flex flex-col gap-2 rounded-lg border border-gray-100 bg-gray-50/60 p-3">
+                          <div className="flex flex-col gap-2 rounded-lg border border-gray-100 bg-gray-50 p-3">
                             <div className="relative">
                               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                               <input
-                                type="search"
+                                type="text"
                                 value={fetchSearch}
                                 onChange={(e) => setFetchSearch(e.target.value)}
-                                placeholder="搜索模型 ID、名称或 owned_by"
+                                placeholder={t('settings.searchModelsPlaceholder')}
                                 className={inputCls + ' pl-9 bg-white'}
                               />
                             </div>
@@ -1238,7 +1461,9 @@ export function SettingsPage() {
                                         : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
                                     }`}
                                   >
-                                    {filter.label}
+                                    {filter.key === 'all'
+                                      ? t('settings.filterAll')
+                                      : filter.label}
                                   </button>
                                 )
                               })}
@@ -1246,9 +1471,11 @@ export function SettingsPage() {
                           </div>
                           <div className="flex items-center justify-between text-xs text-gray-500 px-1 pb-1.5">
                             <span>
-                              共 {fetchedModels.length} 个新模型
+                              {t('settings.modelCount', { n: fetchedModels.length })}
                               {filteredFetchedModels.length !== fetchedModels.length
-                                ? ` · 当前显示 ${filteredFetchedModels.length} 个`
+                                ? ` · ${t('settings.modelCountShown', {
+                                    n: filteredFetchedModels.length
+                                  })}`
                                 : ''}
                             </span>
                             <div className="flex items-center gap-2">
@@ -1264,7 +1491,7 @@ export function SettingsPage() {
                                 }}
                                 className="hover:text-gray-700"
                               >
-                                全选
+                                {t('settings.selectAll')}
                               </button>
                               <span className="text-gray-300">|</span>
                               <button
@@ -1279,13 +1506,13 @@ export function SettingsPage() {
                                 }}
                                 className="hover:text-gray-700"
                               >
-                                全不选
+                                {t('settings.selectNone')}
                               </button>
                             </div>
                           </div>
                           {filteredFetchedModels.length === 0 ? (
                             <div className="rounded-lg border border-dashed border-gray-200 py-8 text-center text-xs text-gray-400">
-                              没有匹配当前搜索或类型过滤的模型。
+                              {t('settings.noMatchingModels')}
                             </div>
                           ) : (
                             filteredFetchedModels.map((m) => {
@@ -1293,7 +1520,9 @@ export function SettingsPage() {
                                 selected: false,
                                 chat: true,
                                 embedding: false,
-                                rerank: false
+                                rerank: false,
+                                text: true,
+                                image: false
                               }
                               return (
                                 <label
@@ -1329,15 +1558,10 @@ export function SettingsPage() {
                                     className="flex items-center gap-1.5 text-[11px]"
                                     onClick={(e) => e.preventDefault()}
                                   >
-                                    {(['chat', 'embedding', 'rerank'] as Capability[]).map((c) => {
+                                    {(Object.keys(CAPABILITY_META) as Capability[]).map((c) => {
+                                      const meta = CAPABILITY_META[c]
                                       const on = s[c]
-                                      const cls = on
-                                        ? c === 'chat'
-                                          ? 'bg-purple-100 text-purple-700 border-purple-200'
-                                          : c === 'embedding'
-                                            ? 'bg-blue-100 text-blue-700 border-blue-200'
-                                            : 'bg-amber-100 text-amber-700 border-amber-200'
-                                        : 'bg-white text-gray-400 border-gray-200'
+                                      const Icon = meta.icon
                                       return (
                                         <button
                                           key={c}
@@ -1348,16 +1572,43 @@ export function SettingsPage() {
                                               [m.id]: { ...s, [c]: !on }
                                             }))
                                           }
-                                          className={`px-2 py-0.5 rounded border ${cls}`}
+                                          className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] ${
+                                            on
+                                              ? meta.chipClass
+                                              : 'bg-white text-gray-400 border-gray-200'
+                                          }`}
                                         >
-                                          {c === 'chat'
-                                            ? 'Chat'
-                                            : c === 'embedding'
-                                              ? 'Embed'
-                                              : 'ReRank'}
+                                          <Icon className="w-2.5 h-2.5" />
+                                          {meta.label}
                                         </button>
                                       )
                                     })}
+                                    {s.chat &&
+                                      (Object.keys(INPUTS_META) as ModelInput[]).map((input) => {
+                                        const meta = INPUTS_META[input]
+                                        const on = s[input]
+                                        const Icon = meta.icon
+                                        return (
+                                          <button
+                                            key={input}
+                                            type="button"
+                                            onClick={() =>
+                                              setPickerState((prev) => ({
+                                                ...prev,
+                                                [m.id]: { ...s, [input]: !on }
+                                              }))
+                                            }
+                                            className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] ${
+                                              on
+                                                ? meta.chipClass
+                                                : 'bg-white text-gray-400 border-gray-200'
+                                            }`}
+                                          >
+                                            <Icon className="w-2.5 h-2.5" />
+                                            {meta.label}
+                                          </button>
+                                        )
+                                      })}
                                   </div>
                                 </label>
                               )
@@ -1371,7 +1622,7 @@ export function SettingsPage() {
                         onClick={() => setFetchOpen(false)}
                         className="text-xs px-3 py-1.5 rounded border border-gray-200 text-gray-600 hover:bg-gray-50"
                       >
-                        取消
+                        {t('common.cancel')}
                       </button>
                       <button
                         onClick={addSelectedFetchedModels}
@@ -1380,7 +1631,7 @@ export function SettingsPage() {
                         }
                         className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                       >
-                        添加选中
+                        {t('settings.addSelected')}
                       </button>
                     </div>
                   </div>
@@ -1397,27 +1648,28 @@ export function SettingsPage() {
 
           {section === 'assistants' && (
             <div className="min-h-0 flex-1 overflow-y-auto space-y-5">
-              <div className="rounded-3xl border border-purple-100 bg-gradient-to-br from-purple-50 via-white to-white p-5 shadow-sm">
+              <div className="rounded-3xl border border-slate-100 bg-gradient-to-br from-slate-50 via-white to-white p-5 shadow-sm dark:border-slate-800 dark:from-slate-900 dark:via-gray-900 dark:to-gray-900">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-purple-100 text-purple-600">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                       <Bot className="h-5 w-5" />
                     </div>
                     <div>
-                      <h3 className="text-base font-semibold text-gray-900">助手设置</h3>
+                      <h3 className="text-base font-semibold text-gray-900">
+                        {t('settings.assistantSettings')}
+                      </h3>
                       <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-500">
-                        在这里集中管理助手提示词、专属模型参数和默认知识库。Chat
-                        页面只保留顶部下拉选择。
+                        {t('settings.assistantDesc')}
                       </p>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={openCreateAssistant}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-purple-500 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:from-purple-600 hover:to-purple-700"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:from-blue-600 hover:to-blue-700"
                   >
                     <Plus className="h-4 w-4" />
-                    新建助手
+                    {t('settings.createAssistant')}
                   </button>
                 </div>
               </div>
@@ -1425,9 +1677,11 @@ export function SettingsPage() {
               {assistants.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-12 text-center">
                   <Bot className="mx-auto h-10 w-10 text-gray-300" />
-                  <div className="mt-3 text-sm font-medium text-gray-700">还没有助手</div>
+                  <div className="mt-3 text-sm font-medium text-gray-700">
+                    {t('settings.noAssistants')}
+                  </div>
                   <p className="mt-1 text-xs text-gray-400">
-                    创建一个助手后即可在 Chat 顶部切换使用。
+                    {t('settings.createAssistantHint')}
                   </p>
                 </div>
               ) : (
@@ -1435,7 +1689,7 @@ export function SettingsPage() {
                   {assistants.map((assistant) => (
                     <div
                       key={assistant.id}
-                      className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm transition-all hover:border-purple-100 hover:shadow-md"
+                      className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm transition-all hover:border-slate-200 hover:shadow-md dark:border-gray-800 dark:bg-gray-900 dark:hover:border-slate-700"
                     >
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
@@ -1444,33 +1698,35 @@ export function SettingsPage() {
                               {assistant.name}
                             </div>
                             {assistant.modelId ? (
-                              <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700">
+                              <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
                                 {assistant.modelId}
                               </span>
                             ) : (
                               <span className="rounded-full bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                                全局默认模型
+                                {t('settings.globalDefaultModel')}
                               </span>
                             )}
                             {assistant.knowledgeBaseIds.length > 0 && (
                               <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
-                                {assistant.knowledgeBaseIds.length} 个知识库
+                                {t('settings.kbCount', {
+                                  n: assistant.knowledgeBaseIds.length
+                                })}
                               </span>
                             )}
                           </div>
                           <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">
-                            {assistant.description || '无描述'}
+                            {assistant.description || t('settings.noDescription')}
                           </p>
                           <p className="mt-2 line-clamp-2 rounded-xl bg-gray-50 px-3 py-2 text-[11px] leading-5 text-gray-500">
-                            {assistant.prompt || '未设置系统提示词'}
+                            {assistant.prompt || t('settings.noPrompt')}
                           </p>
                         </div>
                         <button
                           type="button"
                           onClick={() => openEditAssistant(assistant)}
-                          className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:border-purple-200 hover:bg-purple-50 hover:text-purple-700"
+                          className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-slate-600 dark:hover:bg-slate-800"
                         >
-                          编辑
+                          {t('common.edit')}
                         </button>
                       </div>
                     </div>
@@ -1498,19 +1754,19 @@ export function SettingsPage() {
           {section === 'ocr' && (
             <div className="min-h-0 flex-1 overflow-y-auto space-y-5">
               <SettingGroup>
-                <SettingRow label="API Key">
+                <SettingRow label={t('settings.apiKeyMistral')}>
                   <div className="relative">
                     <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                     <input
                       type="password"
                       value={form.mistralApiKey}
                       onChange={(e) => update('mistralApiKey', e.target.value)}
-                      placeholder="留空则使用本地 pdf-parse 纯文本提取"
+                      placeholder={t('settings.mistralPlaceholder')}
                       className={inputCls + ' pl-9'}
                     />
                   </div>
                 </SettingRow>
-                <SettingRow label="API 地址">
+                <SettingRow label={t('settings.apiUrl')}>
                   <input
                     type="text"
                     value={form.mistralApiUrl}
@@ -1519,7 +1775,7 @@ export function SettingsPage() {
                     className={inputCls}
                   />
                 </SettingRow>
-                <SettingRow label="模型">
+                <SettingRow label={t('settings.model')}>
                   <input
                     type="text"
                     value={form.mistralOcrModel}
@@ -1541,7 +1797,7 @@ export function SettingsPage() {
                   ) : (
                     <FlaskConical className="w-3 h-3" />
                   )}
-                  测试连接
+                  {t('settings.testConnection')}
                 </button>
               </div>
               <TestResultBanner result={mistralTestResult} />
@@ -1551,7 +1807,10 @@ export function SettingsPage() {
           {section === 'proxy' && (
             <div className="min-h-0 flex-1 overflow-y-auto space-y-5">
               <SettingGroup>
-                <SettingRow label="启用代理" description="通过 HTTP 代理访问外部 API。">
+                <SettingRow
+                  label={t('settings.enableProxy')}
+                  description={t('settings.proxyDesc')}
+                >
                   <div className="flex justify-end">
                     <Toggle
                       on={form.proxyEnabled}
@@ -1561,8 +1820,8 @@ export function SettingsPage() {
                 </SettingRow>
                 {form.proxyEnabled ? (
                   <SettingRow
-                    label="代理地址"
-                    description="支持 HTTP 代理,如 http://127.0.0.1:7890"
+                    label={t('settings.proxyAddress')}
+                    description={t('settings.proxyAddressDesc')}
                   >
                     <input
                       type="text"
@@ -1575,8 +1834,155 @@ export function SettingsPage() {
                 ) : null}
               </SettingGroup>
               {!form.proxyEnabled && (
-                <p className="text-xs text-gray-400 px-1">启用后可配置 HTTP 代理。</p>
+                <p className="text-xs text-gray-400 px-1">{t('settings.proxyHint')}</p>
               )}
+            </div>
+          )}
+
+          {section === 'ui' && (
+            <div className="min-h-0 flex-1 overflow-y-auto space-y-5">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                  {t('settings.themeSection')}
+                </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  {t('settings.themeDesc')}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {(['light', 'dark'] as const).map((th) => {
+                  const active = (form?.theme ?? 'light') === th
+                  return (
+                    <button
+                      key={th}
+                      type="button"
+                      onClick={() => {
+                        update('theme', th)
+                        void updateSettings({ theme: th })
+                      }}
+                      className={`flex items-center gap-3 p-4 rounded-xl border transition-all text-left ${
+                        active
+                          ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100 dark:bg-blue-950/40 dark:ring-blue-900/50'
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50 dark:border-gray-800 dark:hover:border-gray-700 dark:hover:bg-gray-800/50'
+                      }`}
+                    >
+                      <span
+                        className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${
+                          th === 'light'
+                            ? 'bg-white border-gray-300 dark:bg-gray-900 dark:border-gray-700'
+                            : 'bg-gray-900 border-gray-700'
+                        }`}
+                      >
+                        {th === 'light' ? (
+                          <span className="w-3 h-3 rounded-full bg-amber-400" />
+                        ) : (
+                          <span className="w-3 h-3 rounded-full bg-slate-500" />
+                        )}
+                      </span>
+                      <div className="flex flex-col gap-0.5 min-w-0">
+                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                          {th === 'light' ? t('settings.themeLight') : t('settings.themeDark')}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+              <SettingGroup>
+                <SettingRow
+                  label={t('settings.codeBlockWordWrap')}
+                  description={t('settings.codeBlockWordWrapDesc')}
+                >
+                  <div className="flex justify-end">
+                    <Toggle
+                      on={form.codeBlockWordWrap}
+                      onChange={() => update('codeBlockWordWrap', !form.codeBlockWordWrap)}
+                    />
+                  </div>
+                </SettingRow>
+                <SettingRow
+                  label={t('settings.codeBlockShowLineNumbers')}
+                  description={t('settings.codeBlockShowLineNumbersDesc')}
+                >
+                <div className="flex justify-end">
+                  <Toggle
+                    on={form.codeBlockShowLineNumbers}
+                    onChange={() => update('codeBlockShowLineNumbers', !form.codeBlockShowLineNumbers)}
+                  />
+                </div>
+              </SettingRow>
+            </SettingGroup>
+            <SettingGroup>
+              <SettingRow
+                label={t('settings.codeTheme')}
+                description={t('settings.codeThemeDesc')}
+              >
+                <select
+                  value={form.codeTheme}
+                  onChange={(e) => {
+                    const ct = e.target.value as CodeTheme
+                    update('codeTheme', ct)
+                    void updateSettings({ codeTheme: ct })
+                  }}
+                  className={inputCls}
+                >
+                  {CODE_THEMES.map((ct) => (
+                    <option key={ct} value={ct}>
+                      {CODE_THEME_LABELS[ct]}
+                    </option>
+                  ))}
+                </select>
+              </SettingRow>
+              <SettingRow
+                label={t('settings.codeFont')}
+                description={t('settings.codeFontDesc')}
+              >
+                <select
+                  value={form.codeFont}
+                  onChange={(e) => {
+                    const cf = e.target.value as CodeFont
+                    update('codeFont', cf)
+                    void updateSettings({ codeFont: cf })
+                  }}
+                  className={inputCls}
+                >
+                  {CODE_FONTS.map((cf) => (
+                    <option key={cf} value={cf}>
+                      {CODE_FONT_LABELS[cf]}
+                    </option>
+                  ))}
+                </select>
+              </SettingRow>
+              <SettingRow
+                label={t('settings.codeFontSize')}
+                description={t('settings.codeFontSizeDesc')}
+              >
+                <select
+                  value={form.codeFontSize}
+                  onChange={(e) => {
+                    const cfs = e.target.value as CodeFontSize
+                    update('codeFontSize', cfs)
+                    void updateSettings({ codeFontSize: cfs })
+                  }}
+                  className={inputCls}
+                >
+                  {CODE_FONT_SIZES.map((cfs) => (
+                    <option key={cfs} value={cfs}>
+                      {CODE_FONT_SIZE_LABELS[cfs]}
+                    </option>
+                  ))}
+                </select>
+              </SettingRow>
+              <div className="px-5 py-4 overflow-hidden">
+                <MessageMarkdown content={CODE_THEME_DEMO} />
+              </div>
+            </SettingGroup>
+          </div>
+        )}
+
+          {section === 'language' && (
+            <div className="min-h-0 flex-1 overflow-y-auto space-y-5">
+              <LanguagePane />
             </div>
           )}
         </div>

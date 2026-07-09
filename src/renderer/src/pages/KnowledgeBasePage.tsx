@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useTranslation, type TranslationKey } from '../i18n'
 import { useDocStore } from '../stores/doc-store'
 import { useGraphStore } from '../stores/graph-store'
 import { useKBStore } from '../stores/kb-store'
@@ -39,23 +40,23 @@ const categoryIcons: Record<KnowledgeBase['category'], typeof BookOpen> = {
   custom: FolderOpen
 }
 
-const categoryLabels: Record<KnowledgeBase['category'], string> = {
-  general: '通用',
-  technical: '技术',
-  research: '研究',
-  legal: '法律',
-  medical: '医学',
-  custom: '自定义'
+const categoryLabels: Record<KnowledgeBase['category'], TranslationKey> = {
+  general: 'category.general',
+  technical: 'category.technical',
+  research: 'category.research',
+  legal: 'category.legal',
+  medical: 'category.medical',
+  custom: 'category.custom'
 }
 
 const embeddingStatusBadge: Record<
   Document['embeddingStatus'],
-  { label: string; className: string; icon: typeof CheckCircle2 }
+  { labelKey: TranslationKey; className: string; icon: typeof CheckCircle2 }
 > = {
-  pending: { label: '待向量化', className: 'bg-gray-100 text-gray-500', icon: Clock },
-  processing: { label: '向量化中', className: 'bg-blue-100 text-blue-600', icon: Loader2 },
-  done: { label: '已向量化', className: 'bg-emerald-100 text-emerald-600', icon: CheckCircle2 },
-  failed: { label: '失败', className: 'bg-red-100 text-red-600', icon: XCircle }
+  pending: { labelKey: 'kbPage.statusPending', className: 'bg-gray-100 text-gray-500', icon: Clock },
+  processing: { labelKey: 'kbPage.statusProcessing', className: 'bg-blue-100 text-blue-600', icon: Loader2 },
+  done: { labelKey: 'kbPage.statusDone', className: 'bg-emerald-100 text-emerald-600', icon: CheckCircle2 },
+  failed: { labelKey: 'kbPage.statusFailed', className: 'bg-red-100 text-red-600', icon: XCircle }
 }
 
 export function KnowledgeBasePage() {
@@ -73,7 +74,7 @@ export function KnowledgeBasePage() {
     deleteDocument,
     retryEmbedding
   } = useDocStore()
-  const { graphBuilt, building, loadGraph, buildGraph } = useGraphStore()
+  const { graphBuilt, building, buildProgress, loadGraph, buildGraph } = useGraphStore()
   const [urlInput, setUrlInput] = useState('')
   const [showUrlInput, setShowUrlInput] = useState(false)
 
@@ -87,6 +88,7 @@ export function KnowledgeBasePage() {
   const [editError, setEditError] = useState<string | null>(null)
   const [editRerankRef, setEditRerankRef] = useState('')
 
+  const { t } = useTranslation()
   const kb = knowledgeBases.find((k) => k.id === kbId)
 
   useEffect(() => {
@@ -131,7 +133,7 @@ export function KnowledgeBasePage() {
       })
       setEditOpen(false)
     } catch (e: any) {
-      setEditError(e?.message || '保存失败')
+      setEditError(e?.message || t('kbPage.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -147,15 +149,16 @@ export function KnowledgeBasePage() {
   if (!kb) {
     return (
       <div className="flex items-center justify-center h-full">
-        <p className="text-gray-400">知识库未找到</p>
+        <p className="text-gray-400">{t('kbPage.notFound')}</p>
       </div>
     )
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-8 py-8">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-8">
+    <div className="h-full overflow-y-auto">
+      <div className="max-w-6xl mx-auto px-8 py-8">
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-8">
         <button
           onClick={() => navigate('/')}
           className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
@@ -172,21 +175,21 @@ export function KnowledgeBasePage() {
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-all"
           >
             <Pencil className="w-4 h-4" />
-            编辑
+            {t('kbPage.edit')}
           </button>
           <button
             onClick={() => navigate(`/kb/${kbId}/search`)}
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all shadow-sm"
           >
             <Search className="w-4 h-4" />
-            搜索
+            {t('kbPage.search')}
           </button>
           <button
             onClick={() => navigate(`/kb/${kbId}/graph`)}
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-all"
           >
             <Share2 className="w-4 h-4" />
-            知识图谱
+            {t('kbPage.knowledgeGraph')}
           </button>
         </div>
       </div>
@@ -200,7 +203,7 @@ export function KnowledgeBasePage() {
             className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-300 hover:bg-blue-50/50 transition-all disabled:opacity-50"
           >
             <FileText className="w-4 h-4 text-blue-500" />
-            上传 DOCX
+            {t('kbPage.uploadDocx')}
           </button>
           <button
             onClick={() => kbId && uploadFile(kbId, 'pdf')}
@@ -208,7 +211,7 @@ export function KnowledgeBasePage() {
             className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-300 hover:bg-blue-50/50 transition-all disabled:opacity-50"
           >
             <FileType className="w-4 h-4 text-red-500" />
-            上传 PDF
+            {t('kbPage.uploadPdf')}
           </button>
           <button
             onClick={() => kbId && uploadFile(kbId, 'text')}
@@ -216,7 +219,7 @@ export function KnowledgeBasePage() {
             className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-300 hover:bg-blue-50/50 transition-all disabled:opacity-50"
           >
             <FileText className="w-4 h-4 text-gray-500" />
-            上传 TXT/MD
+            {t('kbPage.uploadTxt')}
           </button>
           <button
             onClick={() => setShowUrlInput(!showUrlInput)}
@@ -224,17 +227,34 @@ export function KnowledgeBasePage() {
             className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-300 hover:bg-blue-50/50 transition-all disabled:opacity-50"
           >
             <Globe className="w-4 h-4 text-emerald-500" />
-            导入网页
+            {t('kbPage.importWeb')}
           </button>
           <button
             onClick={() => kbId && buildGraph(kbId)}
             disabled={building || documents.length === 0}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white border-2 border-dashed border-gray-200 rounded-xl hover:border-purple-300 hover:bg-purple-50/50 transition-all disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white dark:bg-gray-900 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-xl hover:border-blue-300 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition-all disabled:opacity-50"
           >
-            <BrainCircuit className="w-4 h-4 text-purple-500" />
-            {building ? '构建中...' : graphBuilt ? '重建图谱' : '构建图谱'}
+            <BrainCircuit className="w-4 h-4 text-blue-500" />
+            {building ? t('kbPage.building') : graphBuilt ? t('kbPage.rebuildGraph') : t('kbPage.buildGraph')}
           </button>
         </div>
+
+        {building && buildProgress && (
+          <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-950/30 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+              <span className="text-sm text-blue-700 dark:text-blue-300">{buildProgress.status}</span>
+            </div>
+            <div className="h-1.5 bg-blue-100 dark:bg-blue-900/50 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                style={{
+                  width: `${buildProgress.total > 0 ? (buildProgress.current / buildProgress.total) * 100 : 0}%`
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* URL Input */}
         {showUrlInput && (
@@ -243,7 +263,7 @@ export function KnowledgeBasePage() {
               type="url"
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
-              placeholder="输入网页 URL..."
+              placeholder={t('kbPage.enterUrl')}
               className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               onKeyDown={(e) => e.key === 'Enter' && handleImportUrl()}
               autoFocus
@@ -253,7 +273,7 @@ export function KnowledgeBasePage() {
               disabled={!urlInput.trim()}
               className="px-4 py-2 text-sm font-medium text-white bg-emerald-500 rounded-lg hover:bg-emerald-600 disabled:opacity-50 transition-colors"
             >
-              导入
+              {t('common.import')}
             </button>
           </div>
         )}
@@ -280,12 +300,12 @@ export function KnowledgeBasePage() {
       {/* Document List */}
       <div>
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
-          文档列表 ({documents.length})
+          {t('kbPage.documentList', { n: documents.length })}
         </h2>
         {documents.length === 0 ? (
           <div className="text-center py-12 bg-white border border-dashed border-gray-200 rounded-xl">
             <Upload className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-            <p className="text-gray-400 text-sm">上传文档或导入网页开始构建知识库</p>
+            <p className="text-gray-400 text-sm">{t('kbPage.uploadToStart')}</p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -306,7 +326,7 @@ export function KnowledgeBasePage() {
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-gray-900 truncate">{doc.title}</div>
                   <div className="text-xs text-gray-400 truncate">
-                    {doc.sourceType.toUpperCase()} · {doc.chunks.length} 块 ·{' '}
+                    {doc.sourceType.toUpperCase()} · {t('kbPage.chunkCount', { n: doc.chunks.length })} ·{' '}
                     {new Date(doc.createdAt).toLocaleDateString('zh-CN')}
                   </div>
                   {docEmbeddingProgress[doc.id] && docEmbeddingProgress[doc.id].total > 0 && (
@@ -335,14 +355,14 @@ export function KnowledgeBasePage() {
                       className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
                     >
                       <RefreshCw className="w-3 h-3" />
-                      重试
+                      {t('common.retry')}
                     </button>
                   ) : (
                     <span
                       className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${badge.className}`}
                     >
                       <Icon className={`w-3 h-3 ${isProcessing ? 'animate-spin' : ''}`} />
-                      {badge.label}
+                      {t(badge.labelKey)}
                     </span>
                   )
                 })()}
@@ -361,16 +381,16 @@ export function KnowledgeBasePage() {
       {editOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 no-drag">
           <div className="bg-white rounded-xl shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">编辑知识库</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">{t('kbPage.editKb')}</h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">名称</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('kbPage.name')}</label>
                 <input
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  placeholder="输入知识库名称"
+                  placeholder={t('kbPage.enterKbName')}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   autoFocus
                   onKeyDown={(e) => e.key === 'Enter' && handleSaveEdit()}
@@ -378,18 +398,18 @@ export function KnowledgeBasePage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('kbPage.description')}</label>
                 <input
                   type="text"
                   value={editDesc}
                   onChange={(e) => setEditDesc(e.target.value)}
-                  placeholder="简短描述（可选）"
+                  placeholder={t('kbPage.shortDescOptional')}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">类型</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{t('kbPage.category')}</label>
                 <div className="grid grid-cols-3 gap-2">
                   {(Object.keys(categoryLabels) as KnowledgeBase['category'][]).map((cat) => {
                     const Icon = categoryIcons[cat]
@@ -404,7 +424,7 @@ export function KnowledgeBasePage() {
                         }`}
                       >
                         <Icon className="w-4 h-4" />
-                        {categoryLabels[cat]}
+                        {t(categoryLabels[cat])}
                       </button>
                     )
                   })}
@@ -412,14 +432,14 @@ export function KnowledgeBasePage() {
               </div>
 
               <div className="border-t border-gray-100 pt-4">
-                <div className="text-sm font-medium text-gray-700 mb-1">文档分块</div>
+                <div className="text-sm font-medium text-gray-700 mb-1">{t('kbPage.chunking')}</div>
                 <p className="text-xs text-gray-400 mb-3">
-                  修改后只影响以后新增的文档，已有文档保持原切片。
+                  {t('kbPage.chunkingNote')}
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">
-                      块大小 (字符)
+                       {t('kbPage.chunkSize')}
                     </label>
                     <input
                       type="number"
@@ -431,7 +451,7 @@ export function KnowledgeBasePage() {
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">
-                      重叠大小 (字符)
+                       {t('kbPage.chunkOverlap')}
                     </label>
                     <input
                       type="number"
@@ -447,33 +467,33 @@ export function KnowledgeBasePage() {
               <div className="border-t border-gray-100 pt-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Cpu className="w-3.5 h-3.5 text-gray-400" />
-                  <span className="text-sm font-medium text-gray-700">Embedding 模型</span>
+                  <span className="text-sm font-medium text-gray-700">{t('kbPage.embeddingModel')}</span>
                   <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">
-                    不可修改
+                    {t('kbPage.notEditable')}
                   </span>
                 </div>
                 <p className="text-xs text-gray-400 mb-3">
-                  Embedding 配置在创建时确定，修改会导致已有向量失效。
+                  {t('kbPage.embeddingLocked')}
                 </p>
                 <select
                   disabled
                   value=""
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-500"
                 >
-                  <option value="">{kb.embeddingModel || '—'}</option>
+                  <option value="">{kb.embeddingModel || '-'}</option>
                 </select>
               </div>
 
               <div className="border-t border-gray-100 pt-4">
                 <div className="flex items-center gap-2 mb-1">
                   <ListOrdered className="w-3.5 h-3.5 text-gray-400" />
-                  <span className="text-sm font-medium text-gray-700">ReRank 模型</span>
+                  <span className="text-sm font-medium text-gray-700">{t('kbPage.rerankModel')}</span>
                   <span className="text-[10px] text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">
-                    可选
+                    {t('kbPage.optionalRerank')}
                   </span>
                 </div>
                 <p className="text-xs text-gray-400 mb-3">
-                  对检索结果重新排序，不选则跳过 ReRank 步骤。
+                  {t('kbPage.rerankDesc')}
                 </p>
                 {(() => {
                   const options: {
@@ -497,7 +517,7 @@ export function KnowledgeBasePage() {
                       onChange={(e) => setEditRerankRef(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="">未指定（不使用 ReRank）</option>
+                      <option value="">{t('kbPage.notSpecifiedNoRerank')}</option>
                       {options.map((g) => (
                         <optgroup key={g.providerName} label={g.providerName}>
                           {g.models.map((m) => (
@@ -510,7 +530,7 @@ export function KnowledgeBasePage() {
                     </select>
                   ) : (
                     <div className="text-xs text-gray-400 px-1">
-                      尚未在任一提供商中勾选 ReRank 能力。
+                      {t('kbPage.noRerankCapability')}
                     </div>
                   )
                 })()}
@@ -529,7 +549,7 @@ export function KnowledgeBasePage() {
                 disabled={saving}
                 className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleSaveEdit}
@@ -537,12 +557,13 @@ export function KnowledgeBasePage() {
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
               >
                 {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                保存
+                {t('common.save')}
               </button>
             </div>
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }

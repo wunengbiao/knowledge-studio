@@ -1,5 +1,6 @@
-import type { Assistant } from '@shared/types'
+import type { ActiveModelRef, Assistant } from '@shared/types'
 import { create } from 'zustand'
+import { translate } from '../i18n'
 
 type AssistantUpdate = Partial<Omit<Assistant, 'id' | 'createdAt' | 'updatedAt'>>
 
@@ -9,6 +10,7 @@ type AssistantCreate = {
   readonly prompt?: string
   readonly providerId?: string | null
   readonly modelId?: string | null
+  readonly rerankModelRef?: ActiveModelRef | null
   readonly modelParams?: Partial<Assistant['modelParams']>
   readonly knowledgeBaseIds?: string[]
 }
@@ -40,7 +42,7 @@ export const useAssistantStore = create<AssistantState>((set, get) => ({
       const assistants = await window.electronAPI.invoke('assistant:list')
       set({ assistants, loading: false })
     } catch (error) {
-      set({ error: errorMessage(error, '加载助手失败'), loading: false })
+      set({ error: errorMessage(error, translate('error.loadAssistantsFailed')), loading: false })
     }
   },
 

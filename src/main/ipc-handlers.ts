@@ -117,7 +117,12 @@ export function registerIpcHandlers(): void {
   })
 
   // ─── GraphRAG ─────────────────────────────────────────
-  ipcMain.handle('graph:build', async (_e, { kbId }) => graphService.build(kbId))
+  ipcMain.handle('graph:build', async (_e, { kbId }) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    return graphService.build(kbId, (current, total, status) => {
+      win?.webContents.send('progress:graph-build', { kbId, current, total, status })
+    })
+  })
 
   ipcMain.handle('graph:entities', async (_e, { kbId }) => graphService.getEntities(kbId))
 
@@ -278,34 +283,43 @@ export function registerIpcHandlers(): void {
     chatService.deleteMessage(messageId)
   )
 
-  ipcMain.handle('message:edit', async (_e, { messageId, content }) => {
+  ipcMain.handle('message:edit', async (_e, { messageId, content, images }) => {
     const win = BrowserWindow.getAllWindows()[0]
     try {
-      const result = await chatService.editUserMessage(messageId, content, {
-        onDelta: (assistantMessageId, delta) => {
-          win?.webContents.send('chat:stream-delta', { assistantMessageId, delta })
+      const result = await chatService.editUserMessage(
+        messageId,
+        content,
+        {
+          onDelta: (assistantMessageId, delta) => {
+            win?.webContents.send('chat:stream-delta', { assistantMessageId, delta })
+          },
+          onReasoning: (assistantMessageId, delta) => {
+            win?.webContents.send('chat:stream-reasoning', { assistantMessageId, delta })
+          },
+          onDone: (assistantMessageId, content2, reasoning, createdAt) => {
+            win?.webContents.send('chat:stream-done', {
+              assistantMessageId,
+              content: content2,
+              reasoning,
+              createdAt
+            })
+          },
+          onError: (assistantMessageId, error) => {
+            win?.webContents.send('chat:error', { error, assistantMessageId })
+          }
         },
-        onReasoning: (assistantMessageId, delta) => {
-          win?.webContents.send('chat:stream-reasoning', { assistantMessageId, delta })
-        },
-        onDone: (assistantMessageId, content2, reasoning, createdAt) => {
-          win?.webContents.send('chat:stream-done', {
-            assistantMessageId,
-            content: content2,
-            reasoning,
-            createdAt
-          })
-        },
-        onError: (assistantMessageId, error) => {
-          win?.webContents.send('chat:error', { error, assistantMessageId })
-        }
-      })
+        images
+      )
       return result
     } catch (e: any) {
       win?.webContents.send('chat:error', { error: e.message || '请求失败' })
       throw e
     }
   })
+
+  ipcMain.handle('message:update', async (_e, { messageId, content }) =>
+    chatService.updateMessageContent(messageId, content)
+  )
 
   ipcMain.handle('message:regenerate', async (_e, { assistantMessageId }) => {
     const win = BrowserWindow.getAllWindows()[0]
@@ -335,6 +349,10 @@ export function registerIpcHandlers(): void {
       throw e
     }
   })
+
+  ipcMain.handle('chat:abort', async (_e, { assistantMessageId }) => ({
+    aborted: chatService.abortStream(assistantMessageId)
+  }))
 
   // ─── File Dialog ──────────────────────────────────────
   ipcMain.handle('dialog:open-file', async (_e, { filters }) => {

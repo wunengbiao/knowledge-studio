@@ -7,6 +7,7 @@ interface GraphState {
   communities: CommunityReport[]
   graphBuilt: boolean
   building: boolean
+  buildProgress: { current: number; total: number; status: string } | null
 
   loadGraph: (kbId: string) => Promise<void>
   buildGraph: (kbId: string) => Promise<void>
@@ -18,6 +19,7 @@ export const useGraphStore = create<GraphState>((set) => ({
   communities: [],
   graphBuilt: false,
   building: false,
+  buildProgress: null,
 
   loadGraph: async (kbId) => {
     const [status, entities, relations, communities] = await Promise.all([
@@ -35,7 +37,11 @@ export const useGraphStore = create<GraphState>((set) => ({
   },
 
   buildGraph: async (kbId) => {
-    set({ building: true })
+    set({ building: true, buildProgress: null })
+    const cleanup = window.electronAPI.on('progress:graph-build', (data) => {
+      if (data.kbId !== kbId) return
+      set({ buildProgress: { current: data.current, total: data.total, status: data.status } })
+    })
     try {
       await window.electronAPI.invoke('graph:build', { kbId })
       const [entities, relations, communities] = await Promise.all([
@@ -43,9 +49,11 @@ export const useGraphStore = create<GraphState>((set) => ({
         window.electronAPI.invoke('graph:relations', { kbId }),
         window.electronAPI.invoke('graph:communities', { kbId })
       ])
-      set({ graphBuilt: true, entities, relations, communities, building: false })
+      set({ graphBuilt: true, entities, relations, communities, building: false, buildProgress: null })
     } catch {
-      set({ building: false })
+      set({ building: false, buildProgress: null })
+    } finally {
+      cleanup()
     }
   }
 }))

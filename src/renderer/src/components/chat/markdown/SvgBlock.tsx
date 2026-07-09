@@ -1,61 +1,78 @@
-import { Check, Code2, Copy, Eye, Loader2, Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Check, Code2, Copy, Eye, Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { useTranslation } from '../../../i18n'
+import { type TranslationKey, useTranslation } from '../../../i18n'
 import { useKBStore } from '../../../stores/kb-store'
 
-interface MermaidBlockProps {
+interface SvgBlockProps {
   code: string
 }
-
-// Mermaid module singleton — lazy loaded on first render (mirrors cherry-studio's pattern).
-// biome-ignore lint/suspicious/noExplicitAny: dynamic import shape
-let mermaidModule: any = null
-// biome-ignore lint/suspicious/noExplicitAny: dynamic import shape
-let mermaidLoadPromise: Promise<any> | null = null
-
-// biome-ignore lint/suspicious/noExplicitAny: dynamic import shape
-async function loadMermaid(): Promise<any> {
-  if (mermaidModule) return mermaidModule
-  if (mermaidLoadPromise) return mermaidLoadPromise
-  mermaidLoadPromise = import('mermaid').then((mod) => {
-    const m = mod.default || mod
-    m.initialize({
-      startOnLoad: false,
-      theme: 'default',
-      securityLevel: 'loose',
-      fontFamily:
-        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
-    })
-    mermaidModule = m
-    return m
-  })
-  return mermaidLoadPromise
-}
-
-let renderSeq = 0
 
 const MIN_SCALE = 0.25
 const MAX_SCALE = 4
 const ZOOM_STEP = 0.15
 
 /**
- * Mermaid diagram renderer with pan + zoom (cherry-studio's MermaidPreview pattern).
+ * Sanitize SVG markup so it is safe to inject via innerHTML.
  *
- *   - lazy singleton mermaid module
+ * Strips:
+ *   - `<script>` and `<foreignObject>` elements (can carry scripts / arbitrary HTML)
+ *   - `on*` event handler attributes
+ *   - `href` / `xlink:href` values starting with `javascript:`
+ *
+ * Uses DOMParser so malformed SVG is detected up-front (we surface the parser
+ * error to the user instead of injecting broken markup).
+ */
+function sanitizeSvg(svg: string): {
+  html: string
+  error: { key: TranslationKey; detail: string | null } | null
+} {
+  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') {
+    return { html: '', error: { key: 'svg.domParserUnsupported', detail: null } }
+  }
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(svg, 'image/svg+xml')
+  const parseError = doc.querySelector('parsererror')
+  if (parseError) {
+    return { html: '', error: { key: 'svg.parseFailed', detail: parseError.textContent } }
+  }
+  const root = doc.documentElement
+  if (!root || root.tagName.toLowerCase() !== 'svg') {
+    return { html: '', error: { key: 'svg.noSvgRoot', detail: null } }
+  }
+  for (const el of Array.from(root.querySelectorAll('script, foreignObject'))) {
+    el.remove()
+  }
+  for (const el of Array.from(root.querySelectorAll('*'))) {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase()
+      const val = attr.value.trim().toLowerCase()
+      if (name.startsWith('on')) {
+        el.removeAttribute(attr.name)
+      } else if ((name === 'href' || name === 'xlink:href') && val.startsWith('javascript:')) {
+        el.removeAttribute(attr.name)
+      }
+    }
+  }
+  return { html: root.outerHTML, error: null }
+}
+
+/**
+ * SVG renderer with pan + zoom (mirrors MermaidBlock's UX).
+ *
+ *   - sanitized SVG injected via innerHTML (no async library)
  *   - inline preview/source toggle + copy
  *   - drag to pan, ctrl/meta + wheel to zoom
  *   - hover toolbar: zoom in/out, scale %, reset
  */
-function MermaidBlockImpl({ code }: MermaidBlockProps) {
+function SvgBlockImpl({ code }: SvgBlockProps) {
   const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const transformRef = useRef({ scale: 1, x: 0, y: 0 })
   const [showSource, setShowSource] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<{ key: TranslationKey; detail: string | null } | null>(null)
+  const [svgHtml, setSvgHtml] = useState<string>('')
   const [scalePct, setScalePct] = useState(100)
-  const renderIdRef = useRef(`mermaid-${++renderSeq}`)
 
   const trimmed = code.trim()
   const wrap = !!useKBStore((s) => s.settings?.codeBlockWordWrap)
@@ -95,40 +112,32 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
     applyTransform()
   }, [applyTransform])
 
+  // Sanitize + inject SVG markup whenever the source changes.
   useEffect(() => {
     if (showSource || !trimmed) {
-      setLoading(false)
+      setSvgHtml('')
+      setError(null)
       return
     }
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-
-    void (async () => {
-      try {
-        const mermaid = await loadMermaid()
-        await mermaid.parse(trimmed)
-        const { svg } = await mermaid.render(renderIdRef.current, trimmed)
-        if (cancelled) return
-        const fixed = svg.replace(/translate\(undefined,\s*NaN\)/g, 'translate(0, 0)')
-        if (containerRef.current) {
-          containerRef.current.innerHTML = fixed
-          transformRef.current = { scale: 1, x: 0, y: 0 }
-          setScalePct(100)
-          applyTransform()
-        }
-      } catch (e) {
-        if (cancelled) return
-        setError(e instanceof Error ? e.message : String(e))
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-
-    return () => {
-      cancelled = true
+    const { html, error: err } = sanitizeSvg(trimmed)
+    if (err) {
+      setError(err)
+      setSvgHtml('')
+    } else {
+      setError(null)
+      setSvgHtml(html)
     }
-  }, [trimmed, showSource, applyTransform])
+  }, [trimmed, showSource])
+  // Apply transform + reset on each new SVG injection.
+  useEffect(() => {
+    if (showSource || error || !svgHtml) return
+    transformRef.current = { scale: 1, x: 0, y: 0 }
+    setScalePct(100)
+    if (containerRef.current) {
+      containerRef.current.innerHTML = svgHtml
+      applyTransform()
+    }
+  }, [svgHtml, showSource, error, applyTransform])
 
   // drag-pan
   useEffect(() => {
@@ -155,7 +164,7 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return
       const target = e.target as HTMLElement
-      if (target.closest('[data-mermaid-toolbar]')) return
+      if (target.closest('[data-svg-toolbar]')) return
       startPos.x = e.clientX
       startPos.y = e.clientY
       startTrans.x = transformRef.current.x
@@ -201,12 +210,12 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
     }
   }, [trimmed])
 
-  const showToolbar = !showSource && !error && !loading
+  const showToolbar = !showSource && !error && !!svgHtml
 
   return (
     <div className="group relative my-3 rounded-lg overflow-hidden border border-gray-200 bg-white">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-200 bg-gray-100">
-        <span className="text-[11px] font-mono uppercase tracking-wide text-gray-500">mermaid</span>
+        <span className="text-[11px] font-mono uppercase tracking-wide text-gray-500">svg</span>
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -249,7 +258,7 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
 
       {showSource ? (
         wrap ? (
-          <div key="mermaid-source">
+          <div key="svg-source">
             {sourceLines.map((line, i) => {
               const isFirst = i === 0
               const isLast = i === sourceLineCount - 1
@@ -277,7 +286,7 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
             })}
           </div>
         ) : (
-          <div key="mermaid-source" className="flex">
+          <div key="svg-source" className="flex">
             <div
               aria-hidden="true"
               className="shrink-0 select-none text-right py-2.5 pl-3 pr-2 text-[12.5px] leading-relaxed text-gray-400 bg-gray-100 border-r border-gray-200"
@@ -295,27 +304,23 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
         )
       ) : error ? (
         <div
-          key="mermaid-error"
+          key="svg-error"
           className="px-3 py-3 text-[12px] text-red-600 bg-red-50 border-t border-red-100"
         >
-          <div className="font-medium mb-1">{t('mermaid.renderFailed')}</div>
-          <div className="text-red-500 whitespace-pre-wrap break-all">{error}</div>
+          <div className="font-medium mb-1">{t('svg.renderFailed')}</div>
+          <div className="text-red-500 whitespace-pre-wrap break-all">
+            {error.detail ?? t(error.key)}
+          </div>
         </div>
       ) : (
-        <div key="mermaid-preview" className="relative">
-          {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-white/60 z-10 text-xs text-gray-400">
-              <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
-              {t('mermaid.rendering')}
-            </div>
-          )}
+        <div key="svg-preview" className="relative">
           <div
             ref={containerRef}
-            className="mermaid-container relative px-4 py-4 overflow-hidden cursor-grab active:cursor-grabbing select-none min-h-[140px] flex justify-center [&_svg]:max-w-full [&_svg]:h-auto [&_svg]:will-change-transform"
+            className="svg-container relative px-4 py-4 overflow-hidden cursor-grab active:cursor-grabbing select-none min-h-[140px] flex justify-center [&_svg]:max-w-full [&_svg]:h-auto [&_svg]:will-change-transform"
           />
           {showToolbar && (
             <div
-              data-mermaid-toolbar
+              data-svg-toolbar
               className="absolute right-2 bottom-2 z-20 flex items-center rounded-md border border-gray-200 bg-white/95 backdrop-blur-sm shadow-sm opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
             >
               <button
@@ -359,4 +364,4 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
   )
 }
 
-export const MermaidBlock = memo(MermaidBlockImpl)
+export const SvgBlock = memo(SvgBlockImpl)
