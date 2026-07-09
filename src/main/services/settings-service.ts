@@ -373,7 +373,14 @@ export class SettingsService {
     const current = this.get()
     const merged = resolveActiveFlatFields({ ...current, ...updates })
     this.db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(JSON.stringify(merged))
-    this.applyProxyFromSettings()
+    // Only reconfigure proxy (which closes all connections) if proxy-related
+    // settings actually changed - avoids aborting in-flight LLM streams when
+    // unrelated settings like theme are updated.
+    const proxyChanged =
+      current.proxyEnabled !== merged.proxyEnabled || current.proxyUrl !== merged.proxyUrl
+    if (proxyChanged) {
+      this.applyProxyFromSettings()
+    }
     return merged
   }
 

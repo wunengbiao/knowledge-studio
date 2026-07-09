@@ -127,11 +127,44 @@ body {
   animation: stopBreathing 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* Streaming cursor: black circle shown at the next-character position while
+   an assistant message streams. `currentColor` adapts to the bubble's text
+   color (gray-900 in light mode ≈ #111827, near-white in dark mode). */
+.stream-cursor {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background-color: currentColor;
+  vertical-align: middle;
+  margin-left: 2px;
+  user-select: none;
+}
+
+.stream-cursor-breathe {
+  animation: streamCursorBreathe 1.2s ease-in-out infinite;
+}
+
+@keyframes streamCursorBreathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.5);
+    opacity: 0.55;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .msg-enter {
     animation: none;
   }
   .stop-breathing {
+    animation: none;
+  }
+  .stream-cursor-breathe {
     animation: none;
   }
 }

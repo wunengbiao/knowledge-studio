@@ -468,6 +468,7 @@ export function ChatPage() {
               key={msg.id}
               msg={msg}
               sending={isStreamingCurrent}
+              streamingThis={!!streams[msg.id]}
               isEditing={editingId === msg.id}
               editContent={editingId === msg.id ? editContent : ''}
               onCitationClick={setActiveCitation}
@@ -704,6 +705,7 @@ type CitationClickHandler = (v: { messageId: string; citation: MessageCitation }
 interface MessageBubbleProps {
   msg: Message
   sending: boolean
+  streamingThis: boolean
   isEditing: boolean
   editContent: string
   onCitationClick: CitationClickHandler
@@ -719,6 +721,7 @@ interface MessageBubbleProps {
 const MessageBubble = memo(function MessageBubble({
   msg,
   sending,
+  streamingThis,
   isEditing,
   editContent,
   onCitationClick,
@@ -895,7 +898,11 @@ const MessageBubble = memo(function MessageBubble({
                       : t('chat.thinkingShort')}
                   </div>
                 ) : (
-                  <MessageMarkdown content={msg.content} transformChildren={transformChildren} />
+                  <MessageMarkdown
+                    content={msg.content}
+                    transformChildren={transformChildren}
+                    streaming={streamingThis}
+                  />
                 )}
 
                 {!isStreamingThis && citations.length > 0 && (
