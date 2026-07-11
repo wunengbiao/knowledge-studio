@@ -32,6 +32,7 @@ export function AppLayout() {
   const [assistantPanelOpen, setAssistantPanelOpen] = useState(false)
   const [savingAssistant, setSavingAssistant] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
+  const isFirstThemeRender = useRef(true)
 
   const SIDEBAR_MIN_WIDTH = 200
   const SIDEBAR_MAX_WIDTH = 480
@@ -109,7 +110,20 @@ export function AppLayout() {
 
   useEffect(() => {
     const theme = settings?.theme ?? 'light'
-    document.documentElement.setAttribute('data-theme', theme)
+    if (isFirstThemeRender.current) {
+      isFirstThemeRender.current = false
+      document.documentElement.setAttribute('data-theme', theme)
+      return
+    }
+    const applyTheme = () => {
+      document.documentElement.setAttribute('data-theme', theme)
+    }
+    if (typeof document.startViewTransition !== 'function') {
+      applyTheme()
+      return
+    }
+    const transition = document.startViewTransition(applyTheme)
+    void transition.finished.catch(() => {})
   }, [settings?.theme])
 
   useEffect(() => {

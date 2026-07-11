@@ -25,6 +25,7 @@ export function Sidebar({
   } = useChatStore()
 
   const [hoveredConvId, setHoveredConvId] = useState<string | null>(null)
+  const [themeToggleCount, setThemeToggleCount] = useState(0)
 
   useEffect(() => {
     loadConversations()
@@ -50,7 +51,18 @@ export function Sidebar({
   }
 
   const currentTheme = settings?.theme ?? 'light'
-  const toggleTheme = () => {
+  const toggleTheme = (e: React.MouseEvent<HTMLButtonElement>) => {
+    // Origin point for the circular reveal — consumed by ::view-transition-new(root) in main.css.
+    const rect = e.currentTarget.getBoundingClientRect()
+    document.documentElement.style.setProperty(
+      '--theme-transition-x',
+      `${rect.left + rect.width / 2}px`
+    )
+    document.documentElement.style.setProperty(
+      '--theme-transition-y',
+      `${rect.top + rect.height / 2}px`
+    )
+    setThemeToggleCount((c) => c + 1)
     void updateSettings({ theme: currentTheme === 'dark' ? 'light' : 'dark' })
   }
 
@@ -187,7 +199,12 @@ export function Sidebar({
             title={currentTheme === 'dark' ? t('settings.themeLight') : t('settings.themeDark')}
             className="shrink-0 p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
           >
-            {currentTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            <span
+              key={themeToggleCount}
+              className={themeToggleCount > 0 ? 'inline-flex theme-toggle-icon' : 'inline-flex'}
+            >
+              {currentTheme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </span>
           </button>
         </div>
       </div>
