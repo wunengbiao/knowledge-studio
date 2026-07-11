@@ -1,5 +1,5 @@
 import type { MessageCitation } from '@shared/types'
-import { FileText } from 'lucide-react'
+import { ExternalLink, FileText, Globe } from 'lucide-react'
 import { type ReactNode, memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from '../../../i18n'
 
@@ -8,18 +8,6 @@ interface CitationTooltipProps {
   children: ReactNode
 }
 
-/**
- * Hover tooltip card for a citation reference.
- *
- * Mirrors cherry-studio's `CitationTooltip`:
- *   - header (icon + title)
- *   - body (3-line content preview, line-clamped)
- *   - footer (metadata — here: relevance score)
- *
- * Adapted to this project's `MessageCitation` shape (chunk-backed, not web URL).
- * Pure CSS positioning + a portal-less fixed layer so it floats above
- * neighboring bubble overflow.
- */
 function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -31,6 +19,9 @@ function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
   const triggerRef = useRef<HTMLSpanElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const closeTimerRef = useRef<number | null>(null)
+
+  const isWeb = citation.kind === 'web'
+  const displayTitle = isWeb ? citation.title || citation.url || '' : citation.docTitle || ''
 
   useEffect(() => {
     if (!open) return
@@ -70,6 +61,10 @@ function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
     }
   }
 
+  const badgeClass = isWeb
+    ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300'
+    : 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300'
+
   return (
     <>
       <span
@@ -93,29 +88,46 @@ function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
           ref={cardRef}
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
-          className="fixed z-50 w-[340px] rounded-xl border border-gray-200 bg-white shadow-xl ring-1 ring-black/5 overflow-hidden pointer-events-auto"
+          className="fixed z-50 w-[340px] rounded-xl border border-gray-200 bg-white shadow-xl ring-1 ring-black/5 overflow-hidden pointer-events-auto dark:border-gray-700 dark:bg-gray-800"
           style={{ left: pos.left, top: pos.top }}
           role="tooltip"
         >
-          <div className="flex items-start gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50">
-            <div className="w-6 h-6 rounded-md bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 text-[11px] font-semibold">
+          <div className="flex items-start gap-2 px-3 py-2 border-b border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/50">
+            <div
+              className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 text-[11px] font-semibold ${badgeClass}`}
+            >
               [{citation.index}]
             </div>
             <div className="flex-1 min-w-0">
               <div
-                className="text-[13px] font-medium text-gray-900 truncate"
-                title={citation.docTitle}
+                className="text-[13px] font-medium text-gray-900 truncate dark:text-gray-100"
+                title={displayTitle}
               >
-                {citation.docTitle}
+                {displayTitle}
               </div>
-              <div className="flex items-center gap-1 mt-0.5 text-[10.5px] text-gray-400">
-                <FileText className="w-3 h-3" />
-                <span>{t('chat.relevance', { n: (citation.score * 100).toFixed(1) })}</span>
-              </div>
+              {isWeb ? (
+                <a
+                  href={citation.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-1 mt-0.5 text-[10.5px] text-emerald-600 hover:underline dark:text-emerald-400"
+                >
+                  <Globe className="w-3 h-3 shrink-0" />
+                  <span className="truncate">{citation.url}</span>
+                </a>
+              ) : (
+                <div className="flex items-center gap-1 mt-0.5 text-[10.5px] text-gray-400 dark:text-gray-500">
+                  <FileText className="w-3 h-3" />
+                  <span>
+                    {t('chat.relevance', { n: ((citation.score ?? 0) * 100).toFixed(1) })}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
           <div
-            className="px-3 py-2.5 text-[12.5px] leading-relaxed text-gray-600 overflow-hidden"
+            className="px-3 py-2.5 text-[12.5px] leading-relaxed text-gray-600 overflow-hidden dark:text-gray-300"
             style={{
               display: '-webkit-box',
               WebkitLineClamp: 4,
@@ -124,8 +136,15 @@ function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
           >
             {citation.content}
           </div>
-          <div className="px-3 py-1.5 border-t border-gray-100 bg-gray-50 text-[10.5px] text-gray-400">
-            {t('citation.clickToViewFull')}
+          <div className="px-3 py-1.5 border-t border-gray-100 bg-gray-50 text-[10.5px] text-gray-400 dark:border-gray-700 dark:bg-gray-900/50 dark:text-gray-500">
+            {isWeb ? (
+              <span className="flex items-center gap-1">
+                <ExternalLink className="w-3 h-3" />
+                {t('citation.visitSite')}
+              </span>
+            ) : (
+              t('citation.clickToViewFull')
+            )}
           </div>
         </div>
       )}

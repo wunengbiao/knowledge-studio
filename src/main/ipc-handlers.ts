@@ -111,11 +111,19 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('doc:rename', async (_e, { docId, title }) => docService.rename(docId, title))
 
   // ─── Search ───────────────────────────────────────────
-  ipcMain.handle('search:query', async (_e, { kbId, query, mode, topK }) => {
+  ipcMain.handle('search:query', async (_e, { kbId, query, mode, topK, embeddingTopK }) => {
     const win = BrowserWindow.getAllWindows()[0]
-    return searchService.search(kbId, query, mode, topK, (current, total, status) => {
-      win?.webContents.send('progress:embedding', { kbId, current, total, status })
-    })
+    return searchService.search(
+      kbId,
+      query,
+      mode,
+      topK,
+      (current, total, status) => {
+        win?.webContents.send('progress:embedding', { kbId, current, total, status })
+      },
+      undefined,
+      embeddingTopK
+    )
   })
 
   // ─── GraphRAG ─────────────────────────────────────────
@@ -246,6 +254,12 @@ export function registerIpcHandlers(): void {
     chatService.setAssistant(id, assistantId)
   )
 
+  ipcMain.handle('conversation:list-archived', async () => chatService.listArchived())
+
+  ipcMain.handle('conversation:set-archived', async (_e, { id, archived }) =>
+    chatService.setArchived(id, archived)
+  )
+
   ipcMain.handle('conversation:get', async (_e, { id }) => chatService.get(id))
 
   ipcMain.handle('conversation:send', async (_e, params) => {
@@ -257,6 +271,9 @@ export function registerIpcHandlers(): void {
         },
         onReasoning: (assistantMessageId, delta) => {
           win?.webContents.send('chat:stream-reasoning', { assistantMessageId, delta })
+        },
+        onCitations: (assistantMessageId, citations) => {
+          win?.webContents.send('chat:stream-citations', { assistantMessageId, citations })
         },
         onDone: (assistantMessageId, content, reasoning, createdAt, citations) => {
           win?.webContents.send('chat:stream-done', {
@@ -286,68 +303,84 @@ export function registerIpcHandlers(): void {
     chatService.deleteMessage(messageId)
   )
 
-  ipcMain.handle('message:edit', async (_e, { messageId, content, images }) => {
-    const win = BrowserWindow.getAllWindows()[0]
-    try {
-      const result = await chatService.editUserMessage(
-        messageId,
-        content,
-        {
-          onDelta: (assistantMessageId, delta) => {
-            win?.webContents.send('chat:stream-delta', { assistantMessageId, delta })
+  ipcMain.handle(
+    'message:edit',
+    async (_e, { messageId, content, images, topK, embeddingTopK }) => {
+      const win = BrowserWindow.getAllWindows()[0]
+      try {
+        const result = await chatService.editUserMessage(
+          messageId,
+          content,
+          {
+            onDelta: (assistantMessageId, delta) => {
+              win?.webContents.send('chat:stream-delta', { assistantMessageId, delta })
+            },
+            onReasoning: (assistantMessageId, delta) => {
+              win?.webContents.send('chat:stream-reasoning', { assistantMessageId, delta })
+            },
+            onCitations: (assistantMessageId, citations) => {
+              win?.webContents.send('chat:stream-citations', { assistantMessageId, citations })
+            },
+            onDone: (assistantMessageId, content2, reasoning, createdAt, citations) => {
+              win?.webContents.send('chat:stream-done', {
+                assistantMessageId,
+                content: content2,
+                reasoning,
+                createdAt,
+                citations
+              })
+            },
+            onError: (assistantMessageId, error) => {
+              win?.webContents.send('chat:error', { error, assistantMessageId })
+            }
           },
-          onReasoning: (assistantMessageId, delta) => {
-            win?.webContents.send('chat:stream-reasoning', { assistantMessageId, delta })
-          },
-          onDone: (assistantMessageId, content2, reasoning, createdAt, citations) => {
-            win?.webContents.send('chat:stream-done', {
-              assistantMessageId,
-              content: content2,
-              reasoning,
-              createdAt,
-              citations
-            })
-          },
-          onError: (assistantMessageId, error) => {
-            win?.webContents.send('chat:error', { error, assistantMessageId })
-          }
-        },
-        images
-      )
-      return result
-    } catch (e: any) {
-      win?.webContents.send('chat:error', { error: e.message || '请求失败' })
-      throw e
+          images,
+          topK,
+          embeddingTopK
+        )
+        return result
+      } catch (e: any) {
+        win?.webContents.send('chat:error', { error: e.message || '请求失败' })
+        throw e
+      }
     }
-  })
+  )
 
   ipcMain.handle('message:update', async (_e, { messageId, content }) =>
     chatService.updateMessageContent(messageId, content)
   )
 
-  ipcMain.handle('message:regenerate', async (_e, { assistantMessageId }) => {
+  ipcMain.handle('message:regenerate', async (_e, { assistantMessageId, topK, embeddingTopK }) => {
     const win = BrowserWindow.getAllWindows()[0]
     try {
-      const result = await chatService.regenerateAssistantMessage(assistantMessageId, {
-        onDelta: (id, delta) => {
-          win?.webContents.send('chat:stream-delta', { assistantMessageId: id, delta })
+      const result = await chatService.regenerateAssistantMessage(
+        assistantMessageId,
+        {
+          onDelta: (id, delta) => {
+            win?.webContents.send('chat:stream-delta', { assistantMessageId: id, delta })
+          },
+          onReasoning: (id, delta) => {
+            win?.webContents.send('chat:stream-reasoning', { assistantMessageId: id, delta })
+          },
+          onCitations: (id, citations) => {
+            win?.webContents.send('chat:stream-citations', { assistantMessageId: id, citations })
+          },
+          onDone: (id, content, reasoning, createdAt, citations) => {
+            win?.webContents.send('chat:stream-done', {
+              assistantMessageId: id,
+              content,
+              reasoning,
+              createdAt,
+              citations
+            })
+          },
+          onError: (id, error) => {
+            win?.webContents.send('chat:error', { error, assistantMessageId: id })
+          }
         },
-        onReasoning: (id, delta) => {
-          win?.webContents.send('chat:stream-reasoning', { assistantMessageId: id, delta })
-        },
-        onDone: (id, content, reasoning, createdAt, citations) => {
-          win?.webContents.send('chat:stream-done', {
-            assistantMessageId: id,
-            content,
-            reasoning,
-            createdAt,
-            citations
-          })
-        },
-        onError: (id, error) => {
-          win?.webContents.send('chat:error', { error, assistantMessageId: id })
-        }
-      })
+        topK,
+        embeddingTopK
+      )
       return result
     } catch (e: any) {
       win?.webContents.send('chat:error', { error: e.message || '请求失败' })

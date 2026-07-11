@@ -1,11 +1,15 @@
 import type { Message, MessageCitation, MessageImage } from '@shared/types'
 import {
   AlertCircle,
+  BookOpen,
   Bot,
+  ExternalLink,
   FileText,
+  Globe,
   Image as ImageIcon,
   Loader2,
   Paperclip,
+  RefreshCw,
   Send,
   Square,
   User,
@@ -92,16 +96,19 @@ export function ChatPage() {
     conversations,
     streams,
     error,
+    lastFailedSend,
     selectConversation,
     sendMessage,
     clearError,
+    retryLastFailedSend,
     createConversation,
     clearCurrentConversation,
     deleteMessage,
     editMessage,
     updateMessageContent,
     regenerateMessage,
-    abortStream
+    abortStream,
+    setDraft
   } = useChatStore()
   const { assistants, loadAssistants } = useAssistantStore()
   const { knowledgeBases, loadKnowledgeBases, settings } = useKBStore()
@@ -117,11 +124,13 @@ export function ChatPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
   const [attachedImages, setAttachedImages] = useState<MessageImage[]>([])
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const editableRef = useRef<HTMLDivElement>(null)
   const chipsRef = useRef<HTMLDivElement>(null)
   const isComposingRef = useRef(false)
+  const prevConversationIdRef = useRef<string | null>(null)
   const [isComposing, setIsComposing] = useState(false)
   const [chipsWidth, setChipsWidth] = useState(0)
   const { t } = useTranslation()
@@ -173,15 +182,70 @@ export function ChatPage() {
     clearCurrentConversation()
   }, [clearCurrentConversation, id, selectConversation])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: per-conversation draft save/load - only fires on conversation change; local state captured at switch time
   useEffect(() => {
+    const prevId = prevConversationIdRef.current
+    const newId = currentConversationId
+
+    // Only save if the previous conversation still exists - it might have been
+    // deleted or archived (in which case its draft is already handled by the store).
+    if (prevId && prevId !== newId) {
+      const prevExists = useChatStore.getState().conversations.some((c) => c.id === prevId)
+      if (prevExists) {
+        setDraft(prevId, {
+          text: input,
+          attachedImages,
+          selectedKbIds,
+          webSearchEnabled
+        })
+      }
+    }
+
+    const draft = newId ? useChatStore.getState().drafts[newId] : undefined
+    if (draft) {
+      setInput(draft.text)
+      setAttachedImages(draft.attachedImages)
+      setSelectedKbIds(draft.selectedKbIds)
+      setWebSearchEnabled(draft.webSearchEnabled)
+    } else {
+      setInput('')
+      setAttachedImages([])
+      setWebSearchEnabled(false)
+      // selectedKbIds is set by the KB-init effect below.
+    }
+
+    // contentEditable is imperative - React doesn't manage its textContent.
+    if (editableRef.current) {
+      const newText = draft ? draft.text : ''
+      const hasChips = draft
+        ? draft.selectedKbIds.length > 0 || draft.attachedImages.length > 0
+        : false
+      if (newText !== '') {
+        editableRef.current.textContent = newText
+      } else if (hasChips) {
+        editableRef.current.textContent = '\u200B'
+      } else {
+        editableRef.current.textContent = ''
+      }
+    }
+
+    prevConversationIdRef.current = newId
+  }, [currentConversationId, setDraft])
+
+  // Initializes KBs when no draft exists; also covers late-loading `currentAssistant`.
+  useEffect(() => {
+    const id = currentConversationId
+    // Draft already loaded its KBs in the switch effect - don't override.
+    if (id && useChatStore.getState().drafts[id]) return
+
     if (currentConversationKbIds.length > 0) {
       setSelectedKbIds(currentConversationKbIds)
-      return
-    }
-    if (currentAssistant) {
+    } else if (currentAssistant) {
       setSelectedKbIds(currentAssistant.knowledgeBaseIds)
+    } else {
+      setSelectedKbIds([])
     }
-  }, [currentAssistant, currentConversationKbIds])
+  }, [currentConversationId, currentConversationKbIds, currentAssistant])
 
   // 无依赖 effect：流式响应期间每次渲染都跟进滚动到底部；编辑消息时跳过，避免被编辑的消息被滚出视口
   useEffect(() => {
@@ -223,6 +287,12 @@ export function ChatPage() {
   const handleSend = async () => {
     const trimmed = input.trim()
     const images = attachedImages
+    console.log('[chat:debug:renderer] handleSend', {
+      webSearchEnabled,
+      webSearchEnabledType: typeof webSearchEnabled,
+      hasConversation: !!currentConversationId,
+      selectedKbIds
+    })
     if ((!trimmed && images.length === 0) || isStreamingCurrent) return
     setInput('')
     setAttachedImages([])
@@ -233,10 +303,26 @@ export function ChatPage() {
 
     if (!currentConversationId) {
       const newId = await createConversation(selectedKbIds, undefined, currentAssistant?.id)
+      // Persist the current KB/webSearch toggle as the new conversation's draft
+      // so the switch effect (fired by currentConversationId changing to newId)
+      // restores them instead of resetting to defaults.
+      setDraft(newId, {
+        text: '',
+        attachedImages: [],
+        selectedKbIds,
+        webSearchEnabled
+      })
       navigate(`/chat/${newId}`, { replace: true })
     }
 
-    await sendMessage(trimmed, selectedKbIds, undefined, currentAssistant?.id, images)
+    await sendMessage(
+      trimmed,
+      selectedKbIds,
+      undefined,
+      currentAssistant?.id,
+      images,
+      webSearchEnabled
+    )
   }
 
   const handleAbort = async () => {
@@ -486,7 +572,7 @@ export function ChatPage() {
             conversationMessages[conversationMessages.length - 1]?.role !== 'assistant' && (
               <div className="msg-enter flex gap-3 ml-6">
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slate-600 to-slate-700 flex items-center justify-center shrink-0">
-                  <Bot className="w-4 h-4 text-white" />
+                  <BookOpen className="w-4 h-4 text-white" />
                 </div>
                 <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -498,11 +584,22 @@ export function ChatPage() {
           {error && (
             <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <div className="flex-1">{error}</div>
+              <div className="flex-1 break-words">{error}</div>
+              {lastFailedSend && lastFailedSend.conversationId === currentConversationId && (
+                <button
+                  type="button"
+                  onClick={() => void retryLastFailedSend()}
+                  disabled={isStreamingCurrent}
+                  className="flex items-center gap-1 px-2 py-0.5 -mt-0.5 -mb-0.5 text-xs font-medium text-red-700 hover:text-red-800 hover:bg-red-100 rounded-md disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  {t('common.retry')}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={clearError}
-                className="text-red-400 hover:text-red-600"
+                className="text-red-400 hover:text-red-600 shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -635,6 +732,20 @@ export function ChatPage() {
             />
             <button
               type="button"
+              onClick={() => setWebSearchEnabled((v) => !v)}
+              aria-label={t('chat.webSearch')}
+              aria-pressed={webSearchEnabled}
+              title={t('chat.webSearch')}
+              className={
+                webSearchEnabled
+                  ? 'w-9 h-9 flex items-center justify-center rounded-xl text-blue-600 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950/40 dark:hover:bg-blue-900/50 shrink-0 transition-colors'
+                  : 'w-9 h-9 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0 transition-colors'
+              }
+            >
+              <Globe className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
               onClick={isStreamingCurrent ? handleAbort : handleSend}
               disabled={!isStreamingCurrent && !input.trim() && attachedImages.length === 0}
               aria-label={isStreamingCurrent ? t('chat.stop') : t('chat.send')}
@@ -661,41 +772,59 @@ export function ChatPage() {
       </div>
 
       {/* Citation Popover */}
-      {activeCitation && (
-        <>
-          <button
-            type="button"
-            aria-label={t('chat.closeCitation')}
-            className="fixed inset-0 z-40 bg-black/20"
-            onClick={() => setActiveCitation(null)}
-          />
-          <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(640px,90vw)] max-h-[70vh] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col">
-            <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100">
-              <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 font-semibold text-sm">
-                [{activeCitation.citation.index}]
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-sm text-gray-900 truncate">
-                  {activeCitation.citation.docTitle}
-                </div>
-                <div className="text-[11px] text-gray-400 mt-0.5">
-                  {t('chat.relevance', { n: (activeCitation.citation.score * 100).toFixed(1) })}
-                </div>
-              </div>
+      {activeCitation &&
+        (() => {
+          const c = activeCitation.citation
+          const isWeb = c.kind === 'web'
+          const badgeCls = isWeb
+            ? 'w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300 flex items-center justify-center shrink-0 font-semibold text-sm'
+            : 'w-8 h-8 rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300 flex items-center justify-center shrink-0 font-semibold text-sm'
+          return (
+            <>
               <button
                 type="button"
+                aria-label={t('chat.closeCitation')}
+                className="fixed inset-0 z-40 bg-black/20"
                 onClick={() => setActiveCitation(null)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-              {activeCitation.citation.content}
-            </div>
-          </div>
-        </>
-      )}
+              />
+              <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(640px,90vw)] max-h-[70vh] bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 flex flex-col">
+                <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+                  <div className={badgeCls}>[{c.index}]</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
+                      {isWeb ? c.title || c.url : c.docTitle}
+                    </div>
+                    {isWeb ? (
+                      <a
+                        href={c.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 hover:underline min-w-0"
+                      >
+                        <ExternalLink className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{c.url}</span>
+                      </a>
+                    ) : (
+                      <div className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+                        {t('chat.relevance', { n: ((c.score ?? 0) * 100).toFixed(1) })}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveCitation(null)}
+                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto px-5 py-4 text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
+                  {c.content}
+                </div>
+              </div>
+            </>
+          )
+        })()}
     </div>
   )
 }
@@ -809,7 +938,7 @@ const MessageBubble = memo(function MessageBubble({
             <User className="w-4 h-4 text-white" />
           )
         ) : (
-          <Bot className="w-4 h-4 text-white" />
+          <BookOpen className="w-4 h-4 text-white" />
         )}
       </div>
       <div
@@ -905,27 +1034,36 @@ const MessageBubble = memo(function MessageBubble({
                   />
                 )}
 
-                {!isStreamingThis && citations.length > 0 && (
+                {citations.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-gray-100">
                     <div className="flex items-center gap-1.5 mb-1.5 text-[11px] text-gray-400">
                       <FileText className="w-3 h-3" />
                       <span>{t('chat.citationSource', { n: citations.length })}</span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
-                      {citations.map((c) => (
-                        <CitationTooltip key={c.index} citation={c}>
-                          <button
-                            type="button"
-                            onClick={() => onCitationClick({ messageId: msg.id, citation: c })}
-                            className="group/cite inline-flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] transition-colors"
-                          >
-                            <span className="inline-flex items-center justify-center w-[18px] h-[18px] rounded-full bg-blue-500 group-hover/cite:bg-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors">
-                              {c.index}
-                            </span>
-                            <span className="max-w-[200px] truncate">{c.docTitle}</span>
-                          </button>
-                        </CitationTooltip>
-                      ))}
+                      {citations.map((c) => {
+                        const isWeb = c.kind === 'web'
+                        const chipCls = isWeb
+                          ? 'group/cite inline-flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/50 dark:text-emerald-300 text-[11px] transition-colors'
+                          : 'group/cite inline-flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:hover:bg-blue-900/50 dark:text-blue-300 text-[11px] transition-colors'
+                        const badgeCls = isWeb
+                          ? 'inline-flex items-center justify-center w-[18px] h-[18px] rounded-full bg-emerald-500 group-hover/cite:bg-emerald-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors'
+                          : 'inline-flex items-center justify-center w-[18px] h-[18px] rounded-full bg-blue-500 group-hover/cite:bg-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors'
+                        return (
+                          <CitationTooltip key={c.index} citation={c}>
+                            <button
+                              type="button"
+                              onClick={() => onCitationClick({ messageId: msg.id, citation: c })}
+                              className={chipCls}
+                            >
+                              <span className={badgeCls}>{c.index}</span>
+                              <span className="max-w-[200px] truncate">
+                                {isWeb ? c.title || c.url : c.docTitle}
+                              </span>
+                            </button>
+                          </CitationTooltip>
+                        )
+                      })}
                     </div>
                   </div>
                 )}
@@ -977,7 +1115,10 @@ function renderCitationsInChildren(
               <button
                 type="button"
                 onClick={() => setActiveCitation({ messageId, citation })}
-                aria-label={t('chat.citationN', { n: idx, title: citation.docTitle })}
+                aria-label={t('chat.citationN', {
+                  n: idx,
+                  title: citation.docTitle || citation.title || citation.url || ''
+                })}
                 className="inline-flex items-center justify-center align-super mx-0.5 min-w-[16px] h-[16px] px-[5px] rounded-full bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors"
               >
                 {idx}

@@ -6,23 +6,25 @@ import type {
   CustomParamEntry,
   Message,
   MessageCitation,
-  MessageImage,
-  SearchResult
+  MessageImage
 } from '@shared/types'
 import Database from 'better-sqlite3'
 import { net, app } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { AssistantService } from './assistant-service'
 import {
+  KNOWLEDGE_SEARCH_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+  executeKnowledgeSearch,
+  executeWebSearch,
+  knowledgeSearchToolSchema,
+  webSearchToolSchema
+} from './builtin-tools'
+import {
   type ChatCompletionMessage,
   type ChatCompletionToolCall,
   buildChatCompletionMessages
 } from './chat-message-builder'
-import {
-  KNOWLEDGE_SEARCH_TOOL_NAME,
-  executeKnowledgeSearch,
-  knowledgeSearchToolSchema
-} from './builtin-tools'
 import { SearchService } from './search-service'
 import { SettingsService, resolveCapabilityUrl } from './settings-service'
 
@@ -33,6 +35,7 @@ interface ConversationRow {
   created_at: string
   updated_at: string
   message_count: number
+  archived: number
   llm_preset_id: string | null
   assistant_id: string | null
 }
@@ -78,6 +81,7 @@ interface ChatModelEndpoint {
 export interface StreamEmitter {
   onDelta: (assistantMessageId: string, delta: string) => void
   onReasoning: (assistantMessageId: string, delta: string) => void
+  onCitations: (assistantMessageId: string, citations: MessageCitation[]) => void
   onDone: (
     assistantMessageId: string,
     content: string,
@@ -101,6 +105,28 @@ function parseKnowledgeSearchArgs(args: string): { query: string } {
     /* ignore parse errors, return empty query */
   }
   return { query: '' }
+}
+
+function parseWebSearchArgs(args: string): { query: string } {
+  if (!args.trim()) return { query: '' }
+  try {
+    const parsed = JSON.parse(args)
+    if (parsed && typeof parsed.query === 'string') {
+      return { query: parsed.query }
+    }
+  } catch {
+    /* ignore parse errors, return empty query */
+  }
+  return { query: '' }
+}
+
+function getCurrentTimeString(): string {
+  const now = new Date()
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return (
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
+    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+  )
 }
 
 export class ChatService {
@@ -131,7 +157,8 @@ export class ChatService {
         updated_at TEXT NOT NULL,
         message_count INTEGER NOT NULL DEFAULT 0,
         llm_preset_id TEXT,
-        assistant_id TEXT
+        assistant_id TEXT,
+        archived INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS messages (
@@ -170,11 +197,21 @@ export class ChatService {
     if (!convCols.some((c) => c.name === 'assistant_id')) {
       this.db.exec('ALTER TABLE conversations ADD COLUMN assistant_id TEXT')
     }
+    if (!convCols.some((c) => c.name === 'archived')) {
+      this.db.exec('ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0')
+    }
   }
 
   list(): Conversation[] {
     const rows = this.db
-      .prepare('SELECT * FROM conversations ORDER BY updated_at DESC')
+      .prepare('SELECT * FROM conversations WHERE archived = 0 ORDER BY updated_at DESC')
+      .all() as ConversationRow[]
+    return rows.map(this.rowToConversation)
+  }
+
+  listArchived(): Conversation[] {
+    const rows = this.db
+      .prepare('SELECT * FROM conversations WHERE archived = 1 ORDER BY updated_at DESC')
       .all() as ConversationRow[]
     return rows.map(this.rowToConversation)
   }
@@ -237,6 +274,16 @@ export class ChatService {
     return updated
   }
 
+  setArchived(id: string, archived: boolean): Conversation {
+    const now = new Date().toISOString()
+    this.db
+      .prepare('UPDATE conversations SET archived = ?, updated_at = ? WHERE id = ?')
+      .run(archived ? 1 : 0, now, id)
+    const updated = this.get(id)?.conversation
+    if (!updated) throw new Error('对话不存在')
+    return updated
+  }
+
   get(id: string): { conversation: Conversation; messages: Message[] } | null {
     const row = this.db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as
       | ConversationRow
@@ -260,9 +307,11 @@ export class ChatService {
       kbIds: string[]
       rerankEnabled: boolean
       topK: number
+      embeddingTopK?: number
       llmPresetId?: string
       assistantId?: string
       images?: MessageImage[]
+      webSearch?: boolean
     },
     emitter?: StreamEmitter
   ): Promise<{
@@ -270,7 +319,13 @@ export class ChatService {
     assistantMessageId: string
     citations: MessageCitation[]
   }> {
-    const { conversationId, message, topK, llmPresetId, images } = params
+    const { conversationId, message, topK, embeddingTopK, llmPresetId, images, webSearch } = params
+    console.log('[chat:debug] ChatService.sendMessage received', {
+      webSearch,
+      webSearchType: typeof webSearch,
+      hasKb: params.kbIds.length > 0,
+      kbIds: params.kbIds
+    })
     const existing = this.get(conversationId)
     if (!existing) throw new Error('对话不存在')
 
@@ -321,7 +376,9 @@ export class ChatService {
       assistant,
       effectivePresetId,
       emitter,
-      images
+      images,
+      webSearch ?? false,
+      embeddingTopK
     ).catch((e) => {
       console.error('[chat:sendMessage] LLM stream failed:', e)
       this.removeFailedAssistantMessage(conversationId, assistantMessageId)
@@ -362,7 +419,9 @@ export class ChatService {
     messageId: string,
     content: string,
     emitter?: StreamEmitter,
-    images?: MessageImage[]
+    images?: MessageImage[],
+    topK = 10,
+    embeddingTopK?: number
   ): Promise<{ userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }> {
     const trimmed = content.trim()
     if (!trimmed) throw new Error('消息内容不能为空')
@@ -405,8 +464,9 @@ export class ChatService {
       messageId,
       trimmed,
       emitter,
-      10,
-      images
+      topK,
+      images,
+      embeddingTopK
     )
     return {
       userMessage,
@@ -440,7 +500,9 @@ export class ChatService {
 
   async regenerateAssistantMessage(
     assistantMessageId: string,
-    emitter?: StreamEmitter
+    emitter?: StreamEmitter,
+    topK = 10,
+    embeddingTopK?: number
   ): Promise<{ assistantMessageId: string; citations: MessageCitation[] }> {
     const target = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(assistantMessageId) as
       | MessageRow
@@ -486,8 +548,9 @@ export class ChatService {
       userRow.id,
       userRow.content,
       emitter,
-      10,
-      userImages
+      topK,
+      userImages,
+      embeddingTopK
     )
   }
 
@@ -497,7 +560,8 @@ export class ChatService {
     userMessageContent: string,
     emitter?: StreamEmitter,
     topK = 10,
-    userImages?: MessageImage[]
+    userImages?: MessageImage[],
+    embeddingTopK?: number
   ): Promise<{ assistantMessageId: string; citations: MessageCitation[] }> {
     const existing = this.get(conversationId)
     if (!existing) throw new Error('对话不存在')
@@ -532,7 +596,9 @@ export class ChatService {
       assistant,
       effectivePresetId,
       emitter,
-      userImages
+      userImages,
+      false,
+      embeddingTopK
     ).catch((e) => {
       console.error('[chat:streamResponseForExistingUserMessage] LLM stream failed:', e)
       this.removeFailedAssistantMessage(conversationId, assistantMessageId)
@@ -553,7 +619,9 @@ export class ChatService {
     assistant: Assistant,
     llmPresetId: string | null | undefined,
     emitter?: StreamEmitter,
-    userImages?: MessageImage[]
+    userImages?: MessageImage[],
+    webSearch = false,
+    embeddingTopK?: number
   ): Promise<void> {
     const endpoint = this.resolveChatEndpoint(assistant, llmPresetId)
     if (!endpoint.apiUrl || !endpoint.apiKey) {
@@ -561,14 +629,17 @@ export class ChatService {
     }
 
     const hasKb = kbIds.length > 0
-    const systemPrompt = this.buildSystemPrompt(assistant.prompt, hasKb)
+    const systemPrompt = this.buildSystemPrompt(assistant.prompt, hasKb, webSearch)
     const history = this.getMessages(conversationId)
+    const llmUserMessage = webSearch
+      ? `<time>Today is ：${getCurrentTimeString()}</time>\n${userMessage}`
+      : userMessage
     const initialMessages = buildChatCompletionMessages({
       systemPrompt,
       history,
       currentUserMessageId,
       currentAssistantMessageId: assistantId,
-      userMessage,
+      userMessage: llmUserMessage,
       userImages,
       modelSupportsImage: endpoint.supportsImage,
       contextCount: assistant.contextCount
@@ -583,9 +654,13 @@ export class ChatService {
 
     const partialContent: string[] = []
     const partialReasoning: string[] = []
-    const accumulatedContexts: SearchResult[] = []
-    let finalCitations: MessageCitation[] = []
-    const tools = hasKb ? [knowledgeSearchToolSchema] : undefined
+    const finalCitations: MessageCitation[] = []
+    let nextCitationIndex = 1
+    const toolSchemas = [
+      ...(hasKb ? [knowledgeSearchToolSchema] : []),
+      ...(webSearch ? [webSearchToolSchema] : [])
+    ]
+    const tools = toolSchemas.length > 0 ? toolSchemas : undefined
     let workingMessages: ChatCompletionMessage[] = initialMessages
 
     try {
@@ -630,9 +705,44 @@ export class ChatService {
                 kbIds,
                 query: args.query,
                 topK,
-                rerankModelRef: assistant.rerankModelRef
+                embeddingTopK,
+                rerankModelRef: assistant.rerankModelRef,
+                startIndex: nextCitationIndex
               })
-              accumulatedContexts.push(...hit.results)
+              for (let i = 0; i < hit.results.length; i++) {
+                const r = hit.results[i]
+                finalCitations.push({
+                  index: nextCitationIndex + i,
+                  kind: 'kb',
+                  chunkId: r.chunkId,
+                  docId: r.docId,
+                  docTitle: r.docTitle,
+                  content: r.content,
+                  score: r.score
+                })
+              }
+              nextCitationIndex += hit.results.length
+              workingMessages = [
+                ...workingMessages,
+                { role: 'tool', content: hit.formattedContext, tool_call_id: call.id }
+              ]
+            } else if (call.function.name === WEB_SEARCH_TOOL_NAME) {
+              const args = parseWebSearchArgs(call.function.arguments)
+              const hit = await executeWebSearch({
+                query: args.query,
+                startIndex: nextCitationIndex
+              })
+              for (let i = 0; i < hit.results.length; i++) {
+                const r = hit.results[i]
+                finalCitations.push({
+                  index: nextCitationIndex + i,
+                  kind: 'web',
+                  title: r.title,
+                  url: r.url,
+                  content: r.content
+                })
+              }
+              nextCitationIndex += hit.results.length
               workingMessages = [
                 ...workingMessages,
                 { role: 'tool', content: hit.formattedContext, tool_call_id: call.id }
@@ -649,17 +759,12 @@ export class ChatService {
             }
           }
 
-          finalCitations = accumulatedContexts.map((c, i) => ({
-            index: i + 1,
-            chunkId: c.chunkId,
-            docId: c.docId,
-            docTitle: c.docTitle,
-            content: c.content,
-            score: c.score
-          }))
           this.db
             .prepare('UPDATE messages SET citations = ? WHERE id = ?')
             .run(JSON.stringify(finalCitations), assistantId)
+
+          // Mid-stream delivery so the renderer can render chips + inline [n] before onDone.
+          emitter?.onCitations(assistantId, finalCitations)
 
           continue
         }
@@ -706,7 +811,7 @@ export class ChatService {
   private async fetchStreamOnce(params: {
     endpoint: ChatModelEndpoint
     messages: ChatCompletionMessage[]
-    tools: typeof knowledgeSearchToolSchema[] | undefined
+    tools: (typeof knowledgeSearchToolSchema)[] | undefined
     assistant: Assistant
     controller: AbortController
     onDelta: (text: string) => void
@@ -725,6 +830,16 @@ export class ChatService {
       body.tools = tools
       body.tool_choice = 'auto'
     }
+
+    console.log('[chat:debug] LLM request', {
+      url: endpoint.apiUrl,
+      model: endpoint.model,
+      hasTools: !!(tools && tools.length > 0),
+      toolNames: tools?.map((t) => t.function.name) ?? [],
+      toolChoice: tools && tools.length > 0 ? 'auto' : undefined,
+      messageCount: messages.length,
+      systemPromptPreview: (messages[0]?.content as string)?.slice(0, 200) ?? ''
+    })
 
     let response: Response
     try {
@@ -894,6 +1009,7 @@ export class ChatService {
           }
           const toolCallDeltas = delta?.tool_calls
           if (toolCallDeltas) {
+            console.log('[chat:debug] SSE delta.tool_calls', JSON.stringify(toolCallDeltas))
             for (const tc of toolCallDeltas) {
               const existing = toolCallAccumulator.get(tc.index)
               if (!existing) {
@@ -924,6 +1040,18 @@ export class ChatService {
       const call = toolCallAccumulator.get(idx)
       if (call) toolCalls.push(call)
     }
+    console.log('[chat:debug] LLM stream parsed', {
+      contentLength: contentBuffer.join('').length,
+      contentPreview: contentBuffer.join('').slice(0, 200),
+      reasoningLength: reasoningBuffer.join('').length,
+      toolCallCount: toolCalls.length,
+      toolCallDetails: toolCalls.map((c) => ({
+        id: c.id,
+        name: c.function.name,
+        argsLength: c.function.arguments.length,
+        argsPreview: c.function.arguments.slice(0, 200)
+      }))
+    })
     return {
       content: contentBuffer.join(''),
       reasoning: reasoningBuffer.join(''),
@@ -993,13 +1121,21 @@ export class ChatService {
     return `${cleaned.slice(0, 24)}...`
   }
 
-  private buildSystemPrompt(assistantPrompt: string, hasKb: boolean): string {
+  private buildSystemPrompt(assistantPrompt: string, hasKb: boolean, webSearch: boolean): string {
     const basePrompt =
       assistantPrompt.trim() || '你是一个有帮助的助手。请用 Markdown 格式回答用户问题。'
-    if (!hasKb) return basePrompt
-    return `${basePrompt}
-
-当前对话绑定了知识库。当用户提出事实性问题、需要查阅资料或询问具体信息时，你必须先调用 \`knowledge_search\` 工具检索知识库，再根据检索结果回答。工具返回的资料会以 [1] [2] 编号呈现，回答时使用对应编号标注引用来源。仅在以下情况不调用工具：纯闲聊问候、格式化指令（翻译、改写、总结上文、画图等）、与知识库完全无关的通用常识问题。`
+    const parts: string[] = [basePrompt]
+    if (hasKb) {
+      parts.push(
+        '当前对话绑定了知识库。当用户提出事实性问题、需要查阅资料或询问具体信息时，你必须先调用 `knowledge_search` 工具检索知识库，再根据检索结果回答。工具返回的资料会以 [1] [2] 编号呈现，回答时使用对应编号标注引用来源。仅在以下情况不调用工具：纯闲聊问候、格式化指令（翻译、改写、总结上文、画图等）、与知识库完全无关的通用常识问题。'
+      )
+    }
+    if (webSearch) {
+      parts.push(
+        '当前对话已启用网络搜索。当用户询问最新新闻、实时数据、近期事件、或你训练数据截止后发生的事，以及你不确定的事实性问题时，请调用 `web_search` 工具搜索互联网。工具返回的结果会以 [1] [2] 编号呈现，回答时使用对应编号标注来源。仅在以下情况不调用：闲聊问候、格式化指令、你确信的通用常识问题。'
+      )
+    }
+    return parts.join('\n\n')
   }
 
   private rowToConversation(row: ConversationRow): Conversation {
@@ -1018,7 +1154,8 @@ export class ChatService {
       updatedAt: row.updated_at,
       messageCount: row.message_count,
       llmPresetId: row.llm_preset_id ?? undefined,
-      assistantId: row.assistant_id ?? undefined
+      assistantId: row.assistant_id ?? undefined,
+      archived: !!row.archived
     }
   }
 

@@ -15,6 +15,8 @@ const ja: Record<keyof typeof zh, string> = {
   'common.search': '検索',
   'common.back': '戻る',
   'common.close': '閉じる',
+  'common.prev': '前へ',
+  'common.next': '次へ',
   'common.loading': '読み込み中...',
   'common.optional': '（任意）',
   'common.notSpecified': '未指定',
@@ -31,7 +33,7 @@ const ja: Record<keyof typeof zh, string> = {
   'common.noResults': '結果なし',
 
   // Sidebar
-  'sidebar.title': 'RAG ナレッジベース',
+  'sidebar.title': 'Knowledge Studio',
   'sidebar.hideSidebar': 'サイドバーを隠す',
   'sidebar.showSidebar': 'サイドバーを表示',
   'sidebar.kbManagement': 'ナレッジベース管理',
@@ -43,6 +45,14 @@ const ja: Record<keyof typeof zh, string> = {
   'sidebar.settings': '設定',
   'sidebar.messageCount': '{n} 件のメッセージ',
   'sidebar.documentCount': '{n} 文書',
+  'sidebar.archive': 'アーカイブ',
+  'sidebar.archived': 'アーカイブ済み',
+  'sidebar.unarchive': 'アーカイブ解除',
+  'sidebar.moreActions': 'その他の操作',
+  'sidebar.resize': 'ドラッグして幅を調整',
+  'archive.title': 'アーカイブされた会話',
+  'archive.empty': 'アーカイブされた会話はありません',
+  'archive.restoreHint': '右側の復元ボタンをクリックして会話をサイドバーに戻します',
 
   // AppLayout
   'appLayout.newConversationDefault': '新しい会話',
@@ -63,7 +73,7 @@ const ja: Record<keyof typeof zh, string> = {
   'category.desc.custom': 'カスタム分類',
 
   // Home page
-  'home.heroTitle': 'RAG ナレッジベース',
+  'home.heroTitle': 'Knowledge Studio',
   'home.heroDesc':
     'ローカルファーストの知識管理ツール。BM25 + ベクトル埋め込み + 再ランキングのハイブリッド検索をサポートし、GraphRAG 技術でナレッジグラフ強化検索を実現します。',
   'home.createKb': 'ナレッジベースを作成',
@@ -100,6 +110,7 @@ const ja: Record<keyof typeof zh, string> = {
   'chat.send': '送信',
   'chat.stop': '停止',
   'chat.attachImage': '画像を添付',
+  'chat.webSearch': 'ウェブ検索',
   'chat.imageNotSupported':
     '現在のモデルは画像入力に対応していません。画像はモデルに送信されません。',
 
@@ -150,6 +161,11 @@ const ja: Record<keyof typeof zh, string> = {
   'kbPage.iconAuto': 'カテゴリに従う',
   'kbPage.docNamePlaceholder': 'ドキュメント名を入力...',
   'kbPage.renameFailed': '名前変更に失敗しました',
+  'kbPage.delete': '削除',
+  'kbPage.deleteConfirmTitle': 'このナレッジベースを削除しますか？',
+  'kbPage.deleteConfirmDesc':
+    'ナレッジベースとすべてのドキュメントが完全に削除されます。この操作は元に戻せません。',
+  'kbPage.deleteFailed': '削除に失敗しました',
 
   // Search page
   'searchPage.modeHybrid': 'ハイブリッド検索',
@@ -224,6 +240,15 @@ const ja: Record<keyof typeof zh, string> = {
   'settings.nav.display': '表示',
   'settings.nav.language': '言語',
   'settings.nav.proxy': 'ネットワークプロキシ',
+  'settings.nav.search': '検索設定',
+  'settings.searchDesc': 'ナレッジベース検索の取得件数を設定します。',
+  'settings.searchTopK': '検索結果件数',
+  'settings.searchTopKDesc': 'すべての検索モードで返される最終結果数。',
+  'settings.embeddingTopK': 'ベクトル検索件数',
+  'settings.embeddingTopKDesc':
+    'ベクトル検索の候補数。ハイブリッド検索の候補プールとして使用されます。',
+  'settings.searchHint':
+    'ハイブリッド検索の再現率を高めるため、ベクトル検索件数は検索結果件数以上に設定してください。',
   'settings.delete': '削除',
   'settings.test': 'テスト',
   'settings.modelIdPlaceholder': 'モデル ID、例: deepseek-chat',
@@ -267,6 +292,7 @@ const ja: Record<keyof typeof zh, string> = {
   'settings.noPrompt': 'システムプロンプト未設定',
   'settings.apiKeyMistral': 'API Key',
   'settings.mistralPlaceholder': '空欄の場合はローカル pdf-parse でプレーンテキスト抽出',
+  'settings.mistralKeyHint': 'Mistral コンソールで API キーを取得',
   'settings.apiUrl': 'API URL',
   'settings.model': 'モデル',
   'settings.testConnection': '接続テスト',
@@ -325,6 +351,9 @@ const ja: Record<keyof typeof zh, string> = {
   'settings.langEn': 'English',
   'settings.langJa': '日本語',
   'settings.langKo': '한국어',
+  'settings.langFr': 'Français',
+  'settings.langDe': 'Deutsch',
+  'settings.langRu': 'Русский',
 
   // Message actions
   'messageActions.copy': 'コピー',
@@ -385,15 +414,18 @@ const ja: Record<keyof typeof zh, string> = {
   // Mermaid
   'mermaid.renderFailed': 'Mermaid レンダリング失敗',
   'mermaid.rendering': 'レンダリング中...',
+  'mermaid.generating': '生成中...',
 
   // SVG
   'svg.domParserUnsupported': '現在の環境では DOMParser はサポートされていません',
   'svg.parseFailed': 'SVG 解析失敗',
   'svg.noSvgRoot': '<svg> ルート要素が見つかりません',
   'svg.renderFailed': 'SVG レンダリング失敗',
+  'svg.generating': '生成中...',
 
   // Citation
   'citation.clickToViewFull': '完全な内容を表示するにはクリック',
+  'citation.visitSite': 'サイトを開く',
 
   // Error messages (store-level)
   'error.loadConversationsFailed': '会話リストの読み込みに失敗',

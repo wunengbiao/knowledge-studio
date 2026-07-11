@@ -15,6 +15,8 @@ const en: Record<keyof typeof zh, string> = {
   'common.search': 'Search',
   'common.back': 'Back',
   'common.close': 'Close',
+  'common.prev': 'Previous',
+  'common.next': 'Next',
   'common.loading': 'Loading...',
   'common.optional': '(optional)',
   'common.notSpecified': 'Not specified',
@@ -31,7 +33,7 @@ const en: Record<keyof typeof zh, string> = {
   'common.noResults': 'No results',
 
   // Sidebar
-  'sidebar.title': 'RAG Knowledge Base',
+  'sidebar.title': 'Knowledge Studio',
   'sidebar.hideSidebar': 'Hide sidebar',
   'sidebar.showSidebar': 'Show sidebar',
   'sidebar.kbManagement': 'Knowledge Base Management',
@@ -43,6 +45,14 @@ const en: Record<keyof typeof zh, string> = {
   'sidebar.settings': 'Settings',
   'sidebar.messageCount': '{n} messages',
   'sidebar.documentCount': '{n} docs',
+  'sidebar.archive': 'Archive',
+  'sidebar.archived': 'Archived',
+  'sidebar.unarchive': 'Unarchive',
+  'sidebar.moreActions': 'More actions',
+  'sidebar.resize': 'Drag to resize',
+  'archive.title': 'Archived Conversations',
+  'archive.empty': 'No archived conversations',
+  'archive.restoreHint': 'Click the restore button to send a conversation back to the sidebar',
 
   // AppLayout
   'appLayout.newConversationDefault': 'New conversation',
@@ -63,7 +73,7 @@ const en: Record<keyof typeof zh, string> = {
   'category.desc.custom': 'Custom category',
 
   // Home page
-  'home.heroTitle': 'RAG Knowledge Base',
+  'home.heroTitle': 'Knowledge Studio',
   'home.heroDesc':
     'A local-first knowledge management tool supporting BM25 + vector embedding + reranking hybrid retrieval, combined with GraphRAG technology for knowledge-graph-enhanced search.',
   'home.createKb': 'New Knowledge Base',
@@ -101,6 +111,7 @@ const en: Record<keyof typeof zh, string> = {
   'chat.send': 'Send',
   'chat.stop': 'Stop',
   'chat.attachImage': 'Attach image',
+  'chat.webSearch': 'Web search',
   'chat.imageNotSupported':
     'Current model does not support image input. Images will not be sent to the model.',
 
@@ -150,6 +161,11 @@ const en: Record<keyof typeof zh, string> = {
   'kbPage.iconAuto': 'Follow category',
   'kbPage.docNamePlaceholder': 'Enter document name...',
   'kbPage.renameFailed': 'Rename failed',
+  'kbPage.delete': 'Delete',
+  'kbPage.deleteConfirmTitle': 'Delete this knowledge base?',
+  'kbPage.deleteConfirmDesc':
+    'This will permanently delete the knowledge base and all its documents. This action cannot be undone.',
+  'kbPage.deleteFailed': 'Delete failed',
 
   // Search page
   'searchPage.modeHybrid': 'Hybrid',
@@ -224,6 +240,15 @@ const en: Record<keyof typeof zh, string> = {
   'settings.nav.display': 'Display',
   'settings.nav.language': 'Language',
   'settings.nav.proxy': 'Network Proxy',
+  'settings.nav.search': 'Search',
+  'settings.searchDesc': 'Configure the retrieval count for knowledge base search.',
+  'settings.searchTopK': 'Search result count',
+  'settings.searchTopKDesc': 'Final number of results returned for all search modes.',
+  'settings.embeddingTopK': 'Embedding search count',
+  'settings.embeddingTopKDesc':
+    'Candidate count for vector search, used as the candidate pool in hybrid search.',
+  'settings.searchHint':
+    'Embedding search count should be greater than or equal to search result count for better recall in hybrid search.',
   'settings.delete': 'Delete',
   'settings.test': 'Test',
   'settings.modelIdPlaceholder': 'Model ID, e.g. deepseek-chat',
@@ -268,6 +293,7 @@ const en: Record<keyof typeof zh, string> = {
   'settings.noPrompt': 'No system prompt set',
   'settings.apiKeyMistral': 'API Key',
   'settings.mistralPlaceholder': 'Leave empty to use local pdf-parse plain-text extraction',
+  'settings.mistralKeyHint': 'Get your API key from the Mistral console',
   'settings.apiUrl': 'API URL',
   'settings.model': 'Model',
   'settings.testConnection': 'Test connection',
@@ -327,6 +353,9 @@ const en: Record<keyof typeof zh, string> = {
   'settings.langEn': 'English',
   'settings.langJa': '日本語',
   'settings.langKo': '한국어',
+  'settings.langFr': 'Français',
+  'settings.langDe': 'Deutsch',
+  'settings.langRu': 'Русский',
 
   // Message actions
   'messageActions.copy': 'Copy',
@@ -388,15 +417,18 @@ const en: Record<keyof typeof zh, string> = {
   // Mermaid
   'mermaid.renderFailed': 'Mermaid render failed',
   'mermaid.rendering': 'Rendering...',
+  'mermaid.generating': 'Generating...',
 
   // SVG
   'svg.domParserUnsupported': 'DOMParser not supported in current environment',
   'svg.parseFailed': 'SVG parse failed',
   'svg.noSvgRoot': 'No <svg> root element found',
   'svg.renderFailed': 'SVG render failed',
+  'svg.generating': 'Generating...',
 
   // Citation
   'citation.clickToViewFull': 'Click to view full content',
+  'citation.visitSite': 'Visit site',
 
   // Error messages (store-level)
   'error.loadConversationsFailed': 'Failed to load conversations',

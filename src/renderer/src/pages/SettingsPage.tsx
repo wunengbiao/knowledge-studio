@@ -14,6 +14,7 @@ import {
   Bot,
   Check,
   ChevronRight,
+  ExternalLink,
   FlaskConical,
   Image as ImageIcon,
   Key,
@@ -24,7 +25,6 @@ import {
   MessageSquare,
   Palette,
   Plus,
-  Save,
   ScanText,
   Search,
   Sparkles,
@@ -251,7 +251,7 @@ const FETCH_FILTERS: { key: FetchCapabilityFilter; label: string }[] = [
   { key: 'rerank', label: 'ReRank' }
 ]
 
-type Section = 'general' | 'providers' | 'models' | 'assistants' | 'ocr' | 'proxy' | 'ui' | 'language'
+type Section = 'general' | 'providers' | 'models' | 'assistants' | 'ocr' | 'proxy' | 'ui' | 'language' | 'search'
 
 type NavGroup = {
   titleKey: TranslationKey
@@ -282,6 +282,7 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: 'settings.nav.groupApp',
     items: [
       { key: 'ui', labelKey: 'settings.nav.display', icon: Palette },
+      { key: 'search', labelKey: 'settings.nav.search', icon: Search },
       { key: 'proxy', labelKey: 'settings.nav.proxy', icon: Wifi }
     ]
   }
@@ -344,38 +345,17 @@ function Sidebar({
 
 function PaneHeader({
   title,
-  description,
-  saved,
-  onSave
+  description
 }: {
   title: string
   description?: string
-  saved: boolean
-  onSave: () => void
 }) {
-  const { t } = useTranslation()
   return (
     <div className="flex items-start justify-between gap-4 mb-5">
       <div>
         <h2 className="text-[15px] font-semibold text-gray-900">{title}</h2>
         {description && <p className="mt-1 text-xs text-gray-500">{description}</p>}
       </div>
-      <button
-        onClick={onSave}
-        className="flex-shrink-0 flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors"
-      >
-        {saved ? (
-          <>
-            <Check className="w-3.5 h-3.5" />
-            {t('common.saved')}
-          </>
-        ) : (
-          <>
-            <Save className="w-3.5 h-3.5" />
-            {t('common.save')}
-          </>
-        )}
-      </button>
     </div>
   )
 }
@@ -552,10 +532,12 @@ function buildCapabilityUrl(provider: Provider, capability: Capability): string 
 
 function DefaultModelsCard({
   form,
-  setForm
+  setForm,
+  updateSettings
 }: {
   form: AppSettings
   setForm: React.Dispatch<React.SetStateAction<AppSettings | null>>
+  updateSettings: (updates: Partial<AppSettings>) => Promise<void>
 }) {
   const { t } = useTranslation()
   const rows: {
@@ -586,11 +568,14 @@ function DefaultModelsCard({
   ) => {
     if (!value) {
       setForm((prev) => (prev ? { ...prev, [key]: null } : prev))
+      void updateSettings({ [key]: null })
       return
     }
     const [providerId, ...rest] = value.split('::')
     const modelId = rest.join('::')
-    setForm((prev) => (prev ? { ...prev, [key]: { providerId, modelId } } : prev))
+    const ref = { providerId, modelId }
+    setForm((prev) => (prev ? { ...prev, [key]: ref } : prev))
+    void updateSettings({ [key]: ref })
   }
 
   return (
@@ -659,11 +644,14 @@ function DefaultModelsCard({
 
 function LanguagePane() {
   const { t, language, setLanguage } = useTranslation()
-  const options: { value: 'zh' | 'en' | 'ja' | 'ko'; label: string; desc: string }[] = [
+  const options: { value: 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'ru'; label: string; desc: string }[] = [
     { value: 'zh', label: t('settings.langZh'), desc: '中文' },
     { value: 'en', label: t('settings.langEn'), desc: 'English' },
     { value: 'ja', label: t('settings.langJa'), desc: '日本語' },
-    { value: 'ko', label: t('settings.langKo'), desc: '한국어' }
+    { value: 'ko', label: t('settings.langKo'), desc: '한국어' },
+    { value: 'fr', label: t('settings.langFr'), desc: 'Français' },
+    { value: 'de', label: t('settings.langDe'), desc: 'Deutsch' },
+    { value: 'ru', label: t('settings.langRu'), desc: 'Русский' }
   ]
   return (
     <div className="space-y-4 px-1">
@@ -700,7 +688,6 @@ export function SettingsPage() {
   const { assistants, loadAssistants, createAssistant, updateAssistant, deleteAssistant } =
     useAssistantStore()
   const [form, setForm] = useState<AppSettings | null>(null)
-  const [saved, setSaved] = useState(false)
   const [section, setSection] = useState<Section>('general')
   const [selectedAssistantId, setSelectedAssistantId] = useState('')
   const [assistantPanelOpen, setAssistantPanelOpen] = useState(false)
@@ -758,13 +745,6 @@ export function SettingsPage() {
     }
   }, [settings])
 
-  const handleSave = async () => {
-    if (!form) return
-    await updateSettings(form)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-  }
-
   const selectedAssistant =
     assistants.find((assistant) => assistant.id === selectedAssistantId) ?? assistants[0] ?? null
   const panelAssistant = creatingAssistant ? null : selectedAssistant
@@ -815,32 +795,33 @@ export function SettingsPage() {
 
   const update = (key: keyof AppSettings, value: string | number | boolean) => {
     setForm((prev) => (prev ? { ...prev, [key]: value } : null))
+    void updateSettings({ [key]: value } as Partial<AppSettings>)
   }
 
   const updateSelectedProvider = (patch: Partial<Provider>) => {
     setForm((prev) => {
       if (!prev) return prev
-      return {
-        ...prev,
-        providers: prev.providers.map((p) => (p.id === selectedProviderId ? { ...p, ...patch } : p))
-      }
+      const nextProviders = prev.providers.map((p) =>
+        p.id === selectedProviderId ? { ...p, ...patch } : p
+      )
+      void updateSettings({ providers: nextProviders })
+      return { ...prev, providers: nextProviders }
     })
   }
 
   const updateModel = (modelId: string, patch: Partial<ProviderModel>) => {
     setForm((prev) => {
       if (!prev) return prev
-      return {
-        ...prev,
-        providers: prev.providers.map((p) =>
-          p.id !== selectedProviderId
-            ? p
-            : {
-                ...p,
-                models: p.models.map((m) => (m.id === modelId ? { ...m, ...patch } : m))
-              }
-        )
-      }
+      const nextProviders = prev.providers.map((p) =>
+        p.id !== selectedProviderId
+          ? p
+          : {
+              ...p,
+              models: p.models.map((m) => (m.id === modelId ? { ...m, ...patch } : m))
+            }
+      )
+      void updateSettings({ providers: nextProviders })
+      return { ...prev, providers: nextProviders }
     })
   }
 
@@ -851,12 +832,11 @@ export function SettingsPage() {
       capabilities: { chat: true, embedding: false, rerank: false },
       inputs: { text: true, image: false }
     }
-    setForm({
-      ...form,
-      providers: form.providers.map((p) =>
-        p.id !== selectedProviderId ? p : { ...p, models: [...p.models, newModel] }
-      )
-    })
+    const nextProviders = form.providers.map((p) =>
+      p.id !== selectedProviderId ? p : { ...p, models: [...p.models, newModel] }
+    )
+    setForm({ ...form, providers: nextProviders })
+    void updateSettings({ providers: nextProviders })
   }
 
   const deleteModel = (modelId: string) => {
@@ -864,16 +844,26 @@ export function SettingsPage() {
       if (!prev) return prev
       const clearRef = (ref: ActiveModelRef | null) =>
         ref && ref.providerId === selectedProviderId && ref.modelId === modelId ? null : ref
+      const nextProviders = prev.providers.map((p) =>
+        p.id !== selectedProviderId
+          ? p
+          : { ...p, models: p.models.filter((m) => m.id !== modelId) }
+      )
+      const nextChat = clearRef(prev.activeChatModel)
+      const nextEmbed = clearRef(prev.activeEmbeddingModel)
+      const nextRerank = clearRef(prev.activeRerankModel)
+      void updateSettings({
+        providers: nextProviders,
+        activeChatModel: nextChat,
+        activeEmbeddingModel: nextEmbed,
+        activeRerankModel: nextRerank
+      })
       return {
         ...prev,
-        providers: prev.providers.map((p) =>
-          p.id !== selectedProviderId
-            ? p
-            : { ...p, models: p.models.filter((m) => m.id !== modelId) }
-        ),
-        activeChatModel: clearRef(prev.activeChatModel),
-        activeEmbeddingModel: clearRef(prev.activeEmbeddingModel),
-        activeRerankModel: clearRef(prev.activeRerankModel)
+        providers: nextProviders,
+        activeChatModel: nextChat,
+        activeEmbeddingModel: nextEmbed,
+        activeRerankModel: nextRerank
       }
     })
   }
@@ -889,8 +879,10 @@ export function SettingsPage() {
       apiHost: '',
       models: []
     }
-    setForm({ ...form, providers: [...form.providers, newProvider] })
+    const nextProviders = [...form.providers, newProvider]
+    setForm({ ...form, providers: nextProviders })
     setSelectedProviderId(newProvider.id)
+    void updateSettings({ providers: nextProviders })
   }
 
   const deleteSelectedProvider = () => {
@@ -901,14 +893,23 @@ export function SettingsPage() {
     const fallback = next.find((p) => p.isBuiltIn)?.id ?? next[0]?.id ?? ''
     const clearRef = (ref: ActiveModelRef | null) =>
       ref && ref.providerId === selectedProviderId ? null : ref
+    const nextChat = clearRef(form.activeChatModel)
+    const nextEmbed = clearRef(form.activeEmbeddingModel)
+    const nextRerank = clearRef(form.activeRerankModel)
     setForm({
       ...form,
       providers: next,
-      activeChatModel: clearRef(form.activeChatModel),
-      activeEmbeddingModel: clearRef(form.activeEmbeddingModel),
-      activeRerankModel: clearRef(form.activeRerankModel)
+      activeChatModel: nextChat,
+      activeEmbeddingModel: nextEmbed,
+      activeRerankModel: nextRerank
     })
     setSelectedProviderId(fallback)
+    void updateSettings({
+      providers: next,
+      activeChatModel: nextChat,
+      activeEmbeddingModel: nextEmbed,
+      activeRerankModel: nextRerank
+    })
   }
 
   const testModelCapability = async (model: ProviderModel, cap: Capability) => {
@@ -1040,20 +1041,19 @@ export function SettingsPage() {
       setFetchOpen(false)
       return
     }
-    setForm({
-      ...form,
-      providers: form.providers.map((p) =>
-        p.id !== selectedProviderId
-          ? p
-          : {
-              ...p,
-              models: [
-                ...p.models,
-                ...toAdd.filter((nm) => !p.models.some((existing) => existing.id === nm.id))
-              ]
-            }
-      )
-    })
+    const nextProviders = form.providers.map((p) =>
+      p.id !== selectedProviderId
+        ? p
+        : {
+            ...p,
+            models: [
+              ...p.models,
+              ...toAdd.filter((nm) => !p.models.some((existing) => existing.id === nm.id))
+            ]
+          }
+    )
+    setForm({ ...form, providers: nextProviders })
+    void updateSettings({ providers: nextProviders })
     setFetchOpen(false)
   }
 
@@ -1106,11 +1106,13 @@ export function SettingsPage() {
     ctx.drawImage(img, (SIZE - w) / 2, (SIZE - h) / 2, w, h)
     const compact = canvas.toDataURL('image/jpeg', 0.85)
     setForm({ ...form, userAvatar: compact })
+    void updateSettings({ userAvatar: compact })
   }
 
   const handleRemoveAvatar = () => {
     if (!form) return
     setForm({ ...form, userAvatar: '' })
+    void updateSettings({ userAvatar: '' })
   }
 
   const paneMeta = useMemo<Record<Section, { title: string; description?: string }>>(
@@ -1138,6 +1140,10 @@ export function SettingsPage() {
       proxy: {
         title: t('settings.nav.proxy'),
         description: t('settings.proxyDesc')
+      },
+      search: {
+        title: t('settings.nav.search'),
+        description: t('settings.searchDesc')
       },
       ui: {
         title: t('settings.uiTitle'),
@@ -1187,8 +1193,6 @@ export function SettingsPage() {
           <PaneHeader
             title={paneMeta[section].title}
             description={paneMeta[section].description}
-            saved={saved}
-            onSave={handleSave}
           />
 
           {section === 'general' && (
@@ -1643,7 +1647,7 @@ export function SettingsPage() {
 
           {section === 'models' && (
             <div className="min-h-0 flex-1 overflow-y-auto space-y-5">
-              <DefaultModelsCard form={form} setForm={setForm} />
+              <DefaultModelsCard form={form} setForm={setForm} updateSettings={updateSettings} />
             </div>
           )}
 
@@ -1692,43 +1696,41 @@ export function SettingsPage() {
                       key={assistant.id}
                       className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm transition-all hover:border-slate-200 hover:shadow-md dark:border-gray-800 dark:bg-gray-900 dark:hover:border-slate-700"
                     >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="truncate text-sm font-semibold text-gray-900">
-                              {assistant.name}
-                            </div>
-                            {assistant.modelId ? (
-                              <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                                {assistant.modelId}
-                              </span>
-                            ) : (
-                              <span className="rounded-full bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                                {t('settings.globalDefaultModel')}
-                              </span>
-                            )}
-                            {assistant.knowledgeBaseIds.length > 0 && (
-                              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
-                                {t('settings.kbCount', {
-                                  n: assistant.knowledgeBaseIds.length
-                                })}
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">
-                            {assistant.description || t('settings.noDescription')}
-                          </p>
-                          <p className="mt-2 line-clamp-2 rounded-xl bg-gray-50 px-3 py-2 text-[11px] leading-5 text-gray-500">
-                            {assistant.prompt || t('settings.noPrompt')}
-                          </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="truncate text-sm font-semibold text-gray-900">
+                          {assistant.name}
                         </div>
+                        {assistant.modelId ? (
+                          <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                            {assistant.modelId}
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                            {t('settings.globalDefaultModel')}
+                          </span>
+                        )}
+                        {assistant.knowledgeBaseIds.length > 0 && (
+                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                            {t('settings.kbCount', {
+                              n: assistant.knowledgeBaseIds.length
+                            })}
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={() => openEditAssistant(assistant)}
-                          className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+                          className="ml-auto shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-slate-600 dark:hover:bg-slate-800"
                         >
                           {t('common.edit')}
                         </button>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">
+                        {assistant.description || t('settings.noDescription')}
+                      </p>
+                      <div className="mt-2 rounded-xl bg-gray-50 px-3 py-2">
+                        <p className="line-clamp-2 text-[11px] leading-5 text-gray-500">
+                          {assistant.prompt || t('settings.noPrompt')}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -1755,7 +1757,20 @@ export function SettingsPage() {
           {section === 'ocr' && (
             <div className="min-h-0 flex-1 overflow-y-auto space-y-5">
               <SettingGroup>
-                <SettingRow label={t('settings.apiKeyMistral')}>
+                <SettingRow
+                  label={t('settings.apiKeyMistral')}
+                  description={
+                    <a
+                      href="https://admin.mistral.ai/organization/api-keys"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-500 hover:underline dark:text-blue-400 inline-flex items-center gap-1 align-middle"
+                    >
+                      {t('settings.mistralKeyHint')}
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  }
+                >
                   <div className="relative">
                     <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                     <input
@@ -1840,6 +1855,40 @@ export function SettingsPage() {
             </div>
           )}
 
+          {section === 'search' && (
+            <div className="min-h-0 flex-1 overflow-y-auto space-y-5">
+              <SettingGroup>
+                <SettingRow
+                  label={t('settings.searchTopK')}
+                  description={t('settings.searchTopKDesc')}
+                >
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={form.searchTopK}
+                    onChange={(e) => update('searchTopK', Math.max(1, Number(e.target.value) || 1))}
+                    className={`${inputCls} max-w-[160px]`}
+                  />
+                </SettingRow>
+                <SettingRow
+                  label={t('settings.embeddingTopK')}
+                  description={t('settings.embeddingTopKDesc')}
+                >
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={form.embeddingTopK}
+                    onChange={(e) => update('embeddingTopK', Math.max(1, Number(e.target.value) || 1))}
+                    className={`${inputCls} max-w-[160px]`}
+                  />
+                </SettingRow>
+              </SettingGroup>
+              <p className="text-xs text-gray-400 px-1">{t('settings.searchHint')}</p>
+            </div>
+          )}
+
           {section === 'ui' && (
             <div className="min-h-0 flex-1 overflow-y-auto space-y-5">
               <div>
@@ -1859,7 +1908,6 @@ export function SettingsPage() {
                       type="button"
                       onClick={() => {
                         update('theme', th)
-                        void updateSettings({ theme: th })
                       }}
                       className={`flex items-center gap-3 p-4 rounded-xl border transition-all text-left ${
                         active
@@ -1923,7 +1971,6 @@ export function SettingsPage() {
                   onChange={(e) => {
                     const ct = e.target.value as CodeTheme
                     update('codeTheme', ct)
-                    void updateSettings({ codeTheme: ct })
                   }}
                   className={inputCls}
                 >
@@ -1943,7 +1990,6 @@ export function SettingsPage() {
                   onChange={(e) => {
                     const cf = e.target.value as CodeFont
                     update('codeFont', cf)
-                    void updateSettings({ codeFont: cf })
                   }}
                   className={inputCls}
                 >
@@ -1963,7 +2009,6 @@ export function SettingsPage() {
                   onChange={(e) => {
                     const cfs = e.target.value as CodeFontSize
                     update('codeFontSize', cfs)
-                    void updateSettings({ codeFontSize: cfs })
                   }}
                   className={inputCls}
                 >

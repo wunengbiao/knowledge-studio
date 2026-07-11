@@ -128,17 +128,23 @@ export interface Conversation {
   createdAt: string
   updatedAt: string
   messageCount: number
+  archived: boolean
   llmPresetId?: string
   assistantId?: string
 }
 
 export interface MessageCitation {
   index: number
-  chunkId: string
-  docId: string
-  docTitle: string
+  /** Discriminator: 'kb' for knowledge-base chunks, 'web' for web search results.
+   *  Absent on legacy persisted messages (treated as 'kb'). */
+  kind?: 'kb' | 'web'
+  chunkId?: string
+  docId?: string
+  docTitle?: string
+  score?: number
+  url?: string
+  title?: string
   content: string
-  score: number
 }
 
 export interface MessageImage {
@@ -160,7 +166,7 @@ export interface Message {
   images?: MessageImage[]
 }
 
-export type AppLanguage = 'zh' | 'en' | 'ja' | 'ko'
+export type AppLanguage = 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'ru'
 
 export type AppTheme = 'light' | 'dark'
 
@@ -267,7 +273,8 @@ export interface AppSettings {
   rerankEnabled: boolean
   proxyEnabled: boolean
   proxyUrl: string
-  topK: number
+  searchTopK: number
+  embeddingTopK: number
   dataDir: string
   mistralApiKey: string
   mistralApiUrl: string
@@ -282,6 +289,9 @@ export interface AppSettings {
 
   language: AppLanguage
   theme: AppTheme
+
+  /** Sidebar width in pixels. Persisted so the user's preferred width survives restarts. */
+  sidebarWidth: number
 
   /** @deprecated migrated into `providers` on load; never read by new code. */
   embeddingPresets?: EmbeddingPreset[]

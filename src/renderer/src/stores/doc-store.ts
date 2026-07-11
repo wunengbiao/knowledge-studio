@@ -161,11 +161,13 @@ export const useDocStore = create<DocState>((set, get) => ({
     })
 
     try {
+      const settings = useKBStore.getState().settings
       const results = await window.electronAPI.invoke('search:query', {
         kbId,
         query,
         mode,
-        topK: 10
+        topK: settings?.searchTopK ?? 10,
+        embeddingTopK: settings?.embeddingTopK ?? 20
       })
       set({ searchResults: results, searchQuery: query, searchMode: mode })
     } catch (e: any) {

@@ -15,6 +15,8 @@ const ko: Record<keyof typeof zh, string> = {
   'common.search': '검색',
   'common.back': '뒤로',
   'common.close': '닫기',
+  'common.prev': '이전',
+  'common.next': '다음',
   'common.loading': '로딩 중...',
   'common.optional': '(선택)',
   'common.notSpecified': '미지정',
@@ -31,7 +33,7 @@ const ko: Record<keyof typeof zh, string> = {
   'common.noResults': '결과 없음',
 
   // Sidebar
-  'sidebar.title': 'RAG 지식 베이스',
+  'sidebar.title': 'Knowledge Studio',
   'sidebar.hideSidebar': '사이드바 숨기기',
   'sidebar.showSidebar': '사이드바 표시',
   'sidebar.kbManagement': '지식 베이스 관리',
@@ -43,6 +45,14 @@ const ko: Record<keyof typeof zh, string> = {
   'sidebar.settings': '설정',
   'sidebar.messageCount': '{n}개 메시지',
   'sidebar.documentCount': '{n} 문서',
+  'sidebar.archive': '보관',
+  'sidebar.archived': '보관됨',
+  'sidebar.unarchive': '보관 해제',
+  'sidebar.moreActions': '더 보기',
+  'sidebar.resize': '드래그하여 너비 조정',
+  'archive.title': '보관된 대화',
+  'archive.empty': '보관된 대화가 없습니다',
+  'archive.restoreHint': '오른쪽 복원 버튼을 클릭하여 대화를 사이드바로 복원하세요',
 
   // AppLayout
   'appLayout.newConversationDefault': '새 대화',
@@ -63,7 +73,7 @@ const ko: Record<keyof typeof zh, string> = {
   'category.desc.custom': '사용자 정의 분류',
 
   // Home page
-  'home.heroTitle': 'RAG 지식 베이스',
+  'home.heroTitle': 'Knowledge Studio',
   'home.heroDesc':
     '로컬 우선 지식 관리 도구입니다. BM25 + 벡터 임베딩 + 재순위 하이브리드 검색을 지원하며, GraphRAG 기술로 지식 그래프 강화 검색을 구현합니다.',
   'home.createKb': '지식 베이스 생성',
@@ -100,6 +110,7 @@ const ko: Record<keyof typeof zh, string> = {
   'chat.send': '전송',
   'chat.stop': '중지',
   'chat.attachImage': '이미지 첨부',
+  'chat.webSearch': '웹 검색',
   'chat.imageNotSupported':
     '현재 모델은 이미지 입력을 지원하지 않습니다. 이미지가 모델로 전송되지 않습니다.',
 
@@ -147,6 +158,11 @@ const ko: Record<keyof typeof zh, string> = {
   'kbPage.iconAuto': '카테고리 따르기',
   'kbPage.docNamePlaceholder': '문서 이름 입력...',
   'kbPage.renameFailed': '이름 변경 실패',
+  'kbPage.delete': '삭제',
+  'kbPage.deleteConfirmTitle': '이 지식 베이스를 삭제하시겠습니까?',
+  'kbPage.deleteConfirmDesc':
+    '지식 베이스와 모든 문서가 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.',
+  'kbPage.deleteFailed': '삭제 실패',
 
   // Search page
   'searchPage.modeHybrid': '하이브리드 검색',
@@ -220,6 +236,14 @@ const ko: Record<keyof typeof zh, string> = {
   'settings.nav.display': '표시',
   'settings.nav.language': '언어',
   'settings.nav.proxy': '네트워크 프록시',
+  'settings.nav.search': '검색 설정',
+  'settings.searchDesc': '지식 베이스 검색의 검색 건수를 설정합니다.',
+  'settings.searchTopK': '검색 결과 건수',
+  'settings.searchTopKDesc': '모든 검색 모드에서 반환되는 최종 결과 수입니다.',
+  'settings.embeddingTopK': '임베딩 검색 건수',
+  'settings.embeddingTopKDesc': '벡터 검색의 후보 수로, 하이브리드 검색의 후보 풀로 사용됩니다.',
+  'settings.searchHint':
+    '하이브리드 검색의 재현율을 높이려면 임베딩 검색 건수를 검색 결과 건수 이상으로 설정하세요.',
   'settings.delete': '삭제',
   'settings.test': '테스트',
   'settings.modelIdPlaceholder': '모델 ID, 예: deepseek-chat',
@@ -262,6 +286,7 @@ const ko: Record<keyof typeof zh, string> = {
   'settings.noPrompt': '시스템 프롬프트 미설정',
   'settings.apiKeyMistral': 'API Key',
   'settings.mistralPlaceholder': '비워두면 로컬 pdf-parse 플레인텍스트 추출 사용',
+  'settings.mistralKeyHint': 'Mistral 콘솔에서 API 키 받기',
   'settings.apiUrl': 'API URL',
   'settings.model': '모델',
   'settings.testConnection': '연결 테스트',
@@ -319,6 +344,9 @@ const ko: Record<keyof typeof zh, string> = {
   'settings.langEn': 'English',
   'settings.langJa': '日本語',
   'settings.langKo': '한국어',
+  'settings.langFr': 'Français',
+  'settings.langDe': 'Deutsch',
+  'settings.langRu': 'Русский',
 
   // Message actions
   'messageActions.copy': '복사',
@@ -379,15 +407,18 @@ const ko: Record<keyof typeof zh, string> = {
   // Mermaid
   'mermaid.renderFailed': 'Mermaid 렌더링 실패',
   'mermaid.rendering': '렌더링 중...',
+  'mermaid.generating': '생성 중...',
 
   // SVG
   'svg.domParserUnsupported': '현재 환경에서 DOMParser를 지원하지 않습니다',
   'svg.parseFailed': 'SVG 파싱 실패',
   'svg.noSvgRoot': '<svg> 루트 요소를 찾을 수 없습니다',
   'svg.renderFailed': 'SVG 렌더링 실패',
+  'svg.generating': '생성 중...',
 
   // Citation
   'citation.clickToViewFull': '전체 내용을 보려면 클릭',
+  'citation.visitSite': '사이트 방문',
 
   // Error messages (store-level)
   'error.loadConversationsFailed': '대화 목록 로드 실패',

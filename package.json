@@ -1,5 +1,6 @@
 {
   "name": "rag-knowledge-base",
+  "productName": "Knowledge Studio",
   "version": "1.0.0",
   "description": "Local knowledge base with BM25 + Embedding + ReRank + GraphRAG",
   "main": "./out/main/index.js",
@@ -7,9 +8,14 @@
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",
+    "predev": "node scripts/patch-electron-plist.mjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
+    "dist": "electron-vite build && electron-builder",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:win": "electron-vite build && electron-builder --win",
+    "dist:linux": "electron-vite build && electron-builder --linux",
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/",
@@ -18,6 +24,7 @@
   "dependencies": {
     "@lancedb/lancedb": "^0.17.0",
     "@node-rs/jieba": "^2.0.1",
+    "apache-arrow": "^18.1.0",
     "better-sqlite3": "^11.7.0",
     "highlight.js": "^11.11.1",
     "leiden-ts": "^0.1.0",
@@ -57,5 +64,38 @@
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.0",
     "zustand": "^5.0.0"
+  },
+  "build": {
+    "appId": "pub.torch.knowledge-studio",
+    "productName": "Knowledge Studio",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "icon": "resources/icon.png",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "icon": "resources/icon.png",
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "icon": "resources/icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office"
+    }
   }
 }

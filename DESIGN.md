@@ -1,4 +1,4 @@
-# RAG Knowledge Base Design System
+# Knowledge Studio Design System
 
 ## 1. Product posture
 This is a local Electron knowledge-base chat product. The UI should feel compact, precise, and utility-first: light neutral surfaces, blue as the primary action color, purple only for assistant identity, and no decorative visual noise.

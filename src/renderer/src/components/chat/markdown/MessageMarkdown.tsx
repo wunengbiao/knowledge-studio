@@ -1,7 +1,8 @@
-import { type ReactNode, memo, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, memo, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
+import { MarkdownStreamingContext, type MarkdownStreamingValue } from './MarkdownStreamingContext'
 import { useChatMarkdownComponents } from './useChatMarkdownComponents'
 
 interface MessageMarkdownProps {
@@ -92,6 +93,10 @@ function MessageMarkdownImpl({
   const baseText = variant === 'user' ? 'text-white' : 'text-gray-900'
   const containerRef = useRef<HTMLDivElement>(null)
   const [paused, setPaused] = useState(false)
+  const streamingValue = useMemo<MarkdownStreamingValue>(
+    () => ({ streaming, content }),
+    [streaming, content]
+  )
 
   // Pause detection: while streaming, schedule a timer that flips `paused`
   // to true when no content change arrives within PAUSE_THRESHOLD_MS. Fast
@@ -129,18 +134,20 @@ function MessageMarkdownImpl({
   })
 
   return (
-    <div
-      ref={containerRef}
-      className={`chat-markdown overflow-hidden text-sm leading-relaxed ${baseText} ${className ?? ''}`}
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
-        components={components}
+    <MarkdownStreamingContext.Provider value={streamingValue}>
+      <div
+        ref={containerRef}
+        className={`chat-markdown overflow-hidden text-sm leading-relaxed ${baseText} ${className ?? ''}`}
       >
-        {content}
-      </ReactMarkdown>
-    </div>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeHighlight]}
+          components={components}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    </MarkdownStreamingContext.Provider>
   )
 }
 

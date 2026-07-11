@@ -1,10 +1,12 @@
-import { Check, Code2, Copy, Eye, Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Check, Code2, Copy, Eye, Loader2, Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { type TranslationKey, useTranslation } from '../../../i18n'
 import { useKBStore } from '../../../stores/kb-store'
 
 interface SvgBlockProps {
   code: string
+  complete?: boolean
+  streaming?: boolean
 }
 
 const MIN_SCALE = 0.25
@@ -64,7 +66,7 @@ function sanitizeSvg(svg: string): {
  *   - drag to pan, ctrl/meta + wheel to zoom
  *   - hover toolbar: zoom in/out, scale %, reset
  */
-function SvgBlockImpl({ code }: SvgBlockProps) {
+function SvgBlockImpl({ code, complete, streaming = false }: SvgBlockProps) {
   const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const transformRef = useRef({ scale: 1, x: 0, y: 0 })
@@ -75,6 +77,8 @@ function SvgBlockImpl({ code }: SvgBlockProps) {
   const [scalePct, setScalePct] = useState(100)
 
   const trimmed = code.trim()
+  const isIncomplete = complete === false
+  const effectiveShowSource = showSource || isIncomplete
   const wrap = !!useKBStore((s) => s.settings?.codeBlockWordWrap)
   const sourceLines = trimmed.split('\n')
   const sourceLineCount = sourceLines.length
@@ -114,6 +118,11 @@ function SvgBlockImpl({ code }: SvgBlockProps) {
 
   // Sanitize + inject SVG markup whenever the source changes.
   useEffect(() => {
+    if (isIncomplete) {
+      setSvgHtml('')
+      setError(null)
+      return
+    }
     if (showSource || !trimmed) {
       setSvgHtml('')
       setError(null)
@@ -127,21 +136,21 @@ function SvgBlockImpl({ code }: SvgBlockProps) {
       setError(null)
       setSvgHtml(html)
     }
-  }, [trimmed, showSource])
+  }, [trimmed, showSource, isIncomplete])
   // Apply transform + reset on each new SVG injection.
   useEffect(() => {
-    if (showSource || error || !svgHtml) return
+    if (isIncomplete || showSource || error || !svgHtml) return
     transformRef.current = { scale: 1, x: 0, y: 0 }
     setScalePct(100)
     if (containerRef.current) {
       containerRef.current.innerHTML = svgHtml
       applyTransform()
     }
-  }, [svgHtml, showSource, error, applyTransform])
+  }, [svgHtml, showSource, isIncomplete, error, applyTransform])
 
   // drag-pan
   useEffect(() => {
-    if (showSource || error) return
+    if (isIncomplete || showSource || error) return
     const container = containerRef.current
     if (!container) return
 
@@ -181,11 +190,11 @@ function SvgBlockImpl({ code }: SvgBlockProps) {
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
     }
-  }, [showSource, error, applyTransform])
+  }, [isIncomplete, showSource, error, applyTransform])
 
   // ctrl/meta + wheel zoom
   useEffect(() => {
-    if (showSource || error) return
+    if (isIncomplete || showSource || error) return
     const container = containerRef.current
     if (!container) return
 
@@ -198,7 +207,7 @@ function SvgBlockImpl({ code }: SvgBlockProps) {
 
     container.addEventListener('wheel', onWheel, { passive: false })
     return () => container.removeEventListener('wheel', onWheel)
-  }, [showSource, error, setScale])
+  }, [isIncomplete, showSource, error, setScale])
 
   const handleCopy = useCallback(async () => {
     try {
@@ -210,31 +219,38 @@ function SvgBlockImpl({ code }: SvgBlockProps) {
     }
   }, [trimmed])
 
-  const showToolbar = !showSource && !error && !!svgHtml
+  const showToolbar = !effectiveShowSource && !error && !!svgHtml
 
   return (
     <div className="group relative my-3 rounded-lg overflow-hidden border border-gray-200 bg-white">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-200 bg-gray-100">
         <span className="text-[11px] font-mono uppercase tracking-wide text-gray-500">svg</span>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setShowSource((v) => !v)}
-            className="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-700 px-1.5 py-0.5 rounded hover:bg-gray-200"
-            aria-label={showSource ? 'Show preview' : 'Show source'}
-          >
-            {showSource ? (
-              <>
-                <Eye className="w-3 h-3" />
-                {t('common.preview')}
-              </>
-            ) : (
-              <>
-                <Code2 className="w-3 h-3" />
-                {t('common.source')}
-              </>
-            )}
-          </button>
+          {streaming && isIncomplete ? (
+            <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 px-1.5 py-0.5">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {t('svg.generating')}
+            </span>
+          ) : !isIncomplete ? (
+            <button
+              type="button"
+              onClick={() => setShowSource((v) => !v)}
+              className="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-700 px-1.5 py-0.5 rounded hover:bg-gray-200"
+              aria-label={showSource ? 'Show preview' : 'Show source'}
+            >
+              {showSource ? (
+                <>
+                  <Eye className="w-3 h-3" />
+                  {t('common.preview')}
+                </>
+              ) : (
+                <>
+                  <Code2 className="w-3 h-3" />
+                  {t('common.source')}
+                </>
+              )}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={handleCopy}
@@ -256,7 +272,7 @@ function SvgBlockImpl({ code }: SvgBlockProps) {
         </div>
       </div>
 
-      {showSource ? (
+      {effectiveShowSource ? (
         wrap ? (
           <div key="svg-source">
             {sourceLines.map((line, i) => {

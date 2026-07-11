@@ -1,6 +1,7 @@
 import type { Conversation, Message, MessageCitation, MessageImage } from '@shared/types'
-import { translate } from '../i18n'
 import { create } from 'zustand'
+import { translate } from '../i18n'
+import { useKBStore } from './kb-store'
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
@@ -10,6 +11,57 @@ interface StreamEntry {
   conversationId: string
   content: string
   reasoning: string
+}
+
+// Context captured when a send/edit/regenerate fails, so the user can retry
+// from the error banner without retyping. `retryMode` determines which store
+// action to invoke:
+// - 'send': user message was never persisted (IPC failure) -> fresh sendMessage.
+// - 'edit': user message was persisted -> editMessage re-triggers streaming.
+interface FailedSendContext {
+  conversationId: string
+  message: string
+  kbIds: string[]
+  images?: MessageImage[]
+  webSearch: boolean
+  assistantId?: string
+  // For 'edit' mode: the persisted user message ID to call editMessage on.
+  userMessageId?: string
+  retryMode: 'send' | 'edit'
+}
+
+// Module-level bookkeeping: maps an in-flight assistantMessageId to its send
+// context, so the `chat:error` handler can populate `lastFailedSend` with the
+// original params (which the handler otherwise doesn't have access to). Not
+// reactive state - just a lookup table. Cleared on stream-done / error /
+// message deletion.
+const inFlightSendContexts: Record<string, FailedSendContext> = {}
+
+function stashSendContext(assistantMessageId: string, ctx: FailedSendContext): void {
+  inFlightSendContexts[assistantMessageId] = ctx
+}
+
+function consumeSendContext(assistantMessageId: string): FailedSendContext | undefined {
+  const ctx = inFlightSendContexts[assistantMessageId]
+  if (ctx) {
+    delete inFlightSendContexts[assistantMessageId]
+  }
+  return ctx
+}
+
+function clearSendContextsForConversation(conversationId: string): void {
+  for (const [id, ctx] of Object.entries(inFlightSendContexts)) {
+    if (ctx.conversationId === conversationId) {
+      delete inFlightSendContexts[id]
+    }
+  }
+}
+
+interface ConversationDraft {
+  text: string
+  attachedImages: MessageImage[]
+  selectedKbIds: string[]
+  webSearchEnabled: boolean
 }
 
 interface ChatState {
@@ -23,10 +75,21 @@ interface ChatState {
   // registered (race condition: IPC resolve lags behind the error event).
   // Keyed by assistantMessageId; consumed by sendMessage/editMessage/regenerateMessage.
   pendingStreamErrors: Record<string, string>
+  // Per-conversation input drafts (unsent text/images/KBs/webSearch). In-memory
+  // only; keyed by conversationId. Survives conversation switches but not app
+  // restart. Each conversation's input settings are fully isolated.
+  drafts: Record<string, ConversationDraft>
   error: string | null
+  // When set, the error banner shows a Retry button that re-attempts the
+  // failed send/edit/regenerate. Cleared on successful action start or
+  // clearError. Scoped to a conversation - the retry button only renders
+  // when lastFailedSend.conversationId === currentConversationId.
+  lastFailedSend: FailedSendContext | null
   initialized: boolean
+  archivedConversations: Conversation[]
 
   loadConversations: () => Promise<void>
+  loadArchivedConversations: () => Promise<void>
   createConversation: (
     kbIds?: string[],
     llmPresetId?: string,
@@ -36,6 +99,8 @@ interface ChatState {
   renameConversation: (id: string, name: string) => Promise<void>
   setConversationLlmPreset: (id: string, llmPresetId: string | null) => Promise<void>
   setConversationAssistant: (id: string, assistantId: string | null) => Promise<void>
+  archiveConversation: (id: string) => Promise<void>
+  unarchiveConversation: (id: string) => Promise<void>
   selectConversation: (id: string) => Promise<void>
   clearCurrentConversation: () => void
   sendMessage: (
@@ -43,7 +108,8 @@ interface ChatState {
     kbIds: string[],
     llmPresetId?: string,
     assistantId?: string,
-    images?: MessageImage[]
+    images?: MessageImage[],
+    webSearch?: boolean
   ) => Promise<void>
   deleteMessage: (messageId: string) => Promise<void>
   editMessage: (messageId: string, content: string, images?: MessageImage[]) => Promise<void>
@@ -52,6 +118,8 @@ interface ChatState {
   abortStream: (assistantMessageId: string) => Promise<void>
   subscribeProgress: () => () => void
   clearError: () => void
+  retryLastFailedSend: () => Promise<void>
+  setDraft: (conversationId: string, draft: ConversationDraft) => void
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -60,8 +128,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conversationMessages: [],
   streams: {},
   pendingStreamErrors: {},
+  drafts: {},
   error: null,
+  lastFailedSend: null,
   initialized: false,
+  archivedConversations: [],
 
   async loadConversations() {
     try {
@@ -90,7 +161,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   async deleteConversation(id) {
     await window.electronAPI.invoke('conversation:delete', { id })
-    const { conversations, currentConversationId, streams } = get()
+    const { conversations, currentConversationId, streams, drafts } = get()
     // Drop any active stream entries belonging to the deleted conversation.
     const remainingStreams: Record<string, StreamEntry> = {}
     for (const [key, entry] of Object.entries(streams)) {
@@ -98,11 +169,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         remainingStreams[key] = entry
       }
     }
+    clearSendContextsForConversation(id)
+    // Drop the orphaned draft so it doesn't linger in memory.
+    const { [id]: _deletedDraft, ...remainingDrafts } = drafts
     set({
       conversations: conversations.filter((c) => c.id !== id),
+      archivedConversations: get().archivedConversations.filter((c) => c.id !== id),
       currentConversationId: currentConversationId === id ? null : currentConversationId,
       conversationMessages: currentConversationId === id ? [] : get().conversationMessages,
-      streams: remainingStreams
+      streams: remainingStreams,
+      drafts: remainingDrafts,
+      lastFailedSend: get().lastFailedSend?.conversationId === id ? null : get().lastFailedSend
     })
   },
 
@@ -161,7 +238,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ currentConversationId: null, conversationMessages: [] })
   },
 
-  async sendMessage(message, kbIds, llmPresetId, assistantId, images) {
+  async sendMessage(message, kbIds, llmPresetId, assistantId, images, webSearch) {
+    console.log('[chat:debug:renderer] chat-store.sendMessage called', {
+      webSearch,
+      webSearchType: typeof webSearch,
+      kbIds
+    })
     const { currentConversationId } = get()
     if (!currentConversationId) {
       throw new Error(translate('error.noConversationSelected'))
@@ -179,19 +261,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set({
       error: null,
+      lastFailedSend: null,
       conversationMessages: [...get().conversationMessages, optimisticUserMessage]
     })
 
     try {
+      const settings = useKBStore.getState().settings
+      console.log('[chat:debug:renderer] IPC conversation:send sending', {
+        webSearch,
+        webSearchType: typeof webSearch
+      })
       const result = await window.electronAPI.invoke('conversation:send', {
         conversationId: currentConversationId,
         message,
         kbIds,
         rerankEnabled: false,
-        topK: 10,
+        topK: settings?.searchTopK ?? 10,
+        embeddingTopK: settings?.embeddingTopK ?? 20,
         llmPresetId,
         assistantId,
-        images
+        images,
+        webSearch
       })
 
       const { conversations } = get()
@@ -221,6 +311,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const pendingError = get().pendingStreamErrors[result.assistantMessageId]
       if (pendingError) {
         const { [result.assistantMessageId]: _consumed, ...restErrors } = get().pendingStreamErrors
+        consumeSendContext(result.assistantMessageId)
         set({
           conversationMessages: replaceOptimistic(get().conversationMessages),
           conversations: conversations.map((c) =>
@@ -229,10 +320,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
               : c
           ),
           error: pendingError,
-          pendingStreamErrors: restErrors
+          pendingStreamErrors: restErrors,
+          lastFailedSend: {
+            conversationId: currentConversationId,
+            message,
+            kbIds,
+            images,
+            webSearch: webSearch ?? false,
+            assistantId,
+            userMessageId: result.userMessage.id,
+            retryMode: 'edit'
+          }
         })
         return
       }
+
+      stashSendContext(result.assistantMessageId, {
+        conversationId: currentConversationId,
+        message,
+        kbIds,
+        images,
+        webSearch: webSearch ?? false,
+        assistantId,
+        userMessageId: result.userMessage.id,
+        retryMode: 'edit'
+      })
 
       set({
         conversationMessages: [
@@ -259,7 +371,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversationMessages: state.conversationMessages.filter(
           (m) => m.id !== optimisticUserMessage.id
         ),
-        error: errorMessage(e, translate('error.sendFailed'))
+        error: errorMessage(e, translate('error.sendFailed')),
+        lastFailedSend: {
+          conversationId: currentConversationId,
+          message,
+          kbIds,
+          images,
+          webSearch: webSearch ?? false,
+          assistantId,
+          retryMode: 'send'
+        }
       }))
     }
   },
@@ -278,6 +399,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (!deletedSet.has(key)) {
           remainingStreams[key] = entry
         }
+      }
+      for (const id of result.deletedIds) {
+        consumeSendContext(id)
       }
       set({
         conversationMessages: conversationMessages.filter((m) => !deletedSet.has(m.id)),
@@ -319,14 +443,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set({
       error: null,
+      lastFailedSend: null,
       conversationMessages: optimisticMessages
     })
 
     try {
+      const settings = useKBStore.getState().settings
       const result = await window.electronAPI.invoke('message:edit', {
         messageId,
         content: trimmed,
-        images
+        images,
+        topK: settings?.searchTopK ?? 10,
+        embeddingTopK: settings?.embeddingTopK ?? 20
       })
       const now = new Date().toISOString()
 
@@ -344,9 +472,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         m.id === messageId ? result.userMessage : m
       )
 
+      const editRetryCtx: FailedSendContext = {
+        conversationId: currentConversationId,
+        message: trimmed,
+        kbIds: [],
+        images,
+        webSearch: false,
+        userMessageId: messageId,
+        retryMode: 'edit'
+      }
+
       const pendingError = get().pendingStreamErrors[result.assistantMessageId]
       if (pendingError) {
         const { [result.assistantMessageId]: _consumed, ...restErrors } = get().pendingStreamErrors
+        consumeSendContext(result.assistantMessageId)
         set({
           conversationMessages: replacedMessages,
           conversations: get().conversations.map((c) =>
@@ -359,10 +498,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
               : c
           ),
           error: pendingError,
-          pendingStreamErrors: restErrors
+          pendingStreamErrors: restErrors,
+          lastFailedSend: editRetryCtx
         })
         return
       }
+
+      stashSendContext(result.assistantMessageId, editRetryCtx)
 
       set({
         conversationMessages: [...replacedMessages, assistantPlaceholder],
@@ -387,7 +529,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         conversationMessages: snapshot,
-        error: errorMessage(e, translate('error.editFailed'))
+        error: errorMessage(e, translate('error.editFailed')),
+        lastFailedSend: {
+          conversationId: currentConversationId,
+          message: trimmed,
+          kbIds: [],
+          images,
+          webSearch: false,
+          userMessageId: messageId,
+          retryMode: 'edit'
+        }
       })
     }
   },
@@ -439,20 +590,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (targetIndex === -1) throw new Error(translate('error.messageNotFound'))
 
     const target = conversationMessages[targetIndex]
-    if (target.role !== 'assistant') throw new Error(translate('error.onlyRegenerateAssistantMessages'))
+    if (target.role !== 'assistant')
+      throw new Error(translate('error.onlyRegenerateAssistantMessages'))
 
     const snapshot = conversationMessages
     const subsequentCount = conversationMessages.length - targetIndex - 1
     const optimisticMessages = conversationMessages.slice(0, targetIndex)
+    const precedingUserMessage = targetIndex > 0 ? conversationMessages[targetIndex - 1] : undefined
 
     set({
       error: null,
+      lastFailedSend: null,
       conversationMessages: optimisticMessages
     })
 
     try {
+      const settings = useKBStore.getState().settings
       const result = await window.electronAPI.invoke('message:regenerate', {
-        assistantMessageId
+        assistantMessageId,
+        topK: settings?.searchTopK ?? 10,
+        embeddingTopK: settings?.embeddingTopK ?? 20
       })
       const now = new Date().toISOString()
 
@@ -466,9 +623,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         citations: result.citations
       }
 
+      const regenerateRetryCtx: FailedSendContext | null = precedingUserMessage
+        ? {
+            conversationId: currentConversationId,
+            message: precedingUserMessage.content,
+            kbIds: [],
+            images: precedingUserMessage.images,
+            webSearch: false,
+            userMessageId: precedingUserMessage.id,
+            retryMode: 'edit'
+          }
+        : null
+
       const pendingError = get().pendingStreamErrors[result.assistantMessageId]
       if (pendingError) {
         const { [result.assistantMessageId]: _consumed, ...restErrors } = get().pendingStreamErrors
+        consumeSendContext(result.assistantMessageId)
         set({
           conversationMessages: optimisticMessages,
           conversations: get().conversations.map((c) =>
@@ -481,9 +651,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
               : c
           ),
           error: pendingError,
-          pendingStreamErrors: restErrors
+          pendingStreamErrors: restErrors,
+          lastFailedSend: regenerateRetryCtx
         })
         return
+      }
+
+      if (regenerateRetryCtx) {
+        stashSendContext(result.assistantMessageId, regenerateRetryCtx)
       }
 
       set({
@@ -509,7 +684,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       set({
         conversationMessages: snapshot,
-        error: errorMessage(e, translate('error.regenerateFailed'))
+        error: errorMessage(e, translate('error.regenerateFailed')),
+        lastFailedSend: precedingUserMessage
+          ? {
+              conversationId: currentConversationId,
+              message: precedingUserMessage.content,
+              kbIds: [],
+              images: precedingUserMessage.images,
+              webSearch: false,
+              userMessageId: precedingUserMessage.id,
+              retryMode: 'edit'
+            }
+          : null
       })
     }
   },
@@ -565,9 +751,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     )
 
+    const cleanupCitations = window.electronAPI.on(
+      'chat:stream-citations',
+      ({ assistantMessageId, citations }) => {
+        set((state) => ({
+          conversationMessages: state.conversationMessages.map((m) =>
+            m.id === assistantMessageId ? { ...m, citations } : m
+          )
+        }))
+      }
+    )
+
     const cleanupDone = window.electronAPI.on(
       'chat:stream-done',
       ({ assistantMessageId, content, reasoning, createdAt, citations }) => {
+        consumeSendContext(assistantMessageId)
         set((state) => {
           const entry = state.streams[assistantMessageId]
           if (!entry) return state
@@ -586,6 +784,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     )
 
     const cleanupError = window.electronAPI.on('chat:error', ({ error, assistantMessageId }) => {
+      const failedCtx = assistantMessageId ? consumeSendContext(assistantMessageId) : undefined
       set((state) => {
         const entry = assistantMessageId ? state.streams[assistantMessageId] : undefined
         if (entry) {
@@ -601,7 +800,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 : conversation
             ),
             streams: restStreams,
-            error
+            error,
+            lastFailedSend: failedCtx ?? null
           }
         }
         // Race condition: error arrived before the stream entry was registered.
@@ -623,12 +823,86 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return () => {
       cleanupDelta()
       cleanupReasoning()
+      cleanupCitations()
       cleanupDone()
       cleanupError()
     }
   },
 
   clearError() {
-    set({ error: null })
+    set({ error: null, lastFailedSend: null })
+  },
+
+  async retryLastFailedSend() {
+    const ctx = get().lastFailedSend
+    if (!ctx) return
+    const {
+      conversationId,
+      message,
+      kbIds,
+      images,
+      webSearch,
+      assistantId,
+      userMessageId,
+      retryMode
+    } = ctx
+    set({ error: null, lastFailedSend: null })
+    if (conversationId !== get().currentConversationId) {
+      await get().selectConversation(conversationId)
+    }
+    if (retryMode === 'edit' && userMessageId) {
+      await get().editMessage(userMessageId, message, images)
+    } else {
+      await get().sendMessage(message, kbIds, undefined, assistantId, images, webSearch)
+    }
+  },
+
+  setDraft(conversationId, draft) {
+    set((state) => ({ drafts: { ...state.drafts, [conversationId]: draft } }))
+  },
+
+  async loadArchivedConversations() {
+    try {
+      const archivedConversations = await window.electronAPI.invoke('conversation:list-archived')
+      set({ archivedConversations })
+    } catch (e) {
+      set({ error: errorMessage(e, translate('error.loadConversationsFailed')) })
+    }
+  },
+
+  async archiveConversation(id) {
+    const updated = await window.electronAPI.invoke('conversation:set-archived', {
+      id,
+      archived: true
+    })
+    const { conversations, currentConversationId, streams } = get()
+    const remainingStreams: Record<string, StreamEntry> = {}
+    for (const [key, entry] of Object.entries(streams)) {
+      if (entry.conversationId !== id) {
+        remainingStreams[key] = entry
+      }
+    }
+    clearSendContextsForConversation(id)
+    // Drafts are kept so unarchive restores the unsent input (unlike delete).
+    set({
+      conversations: conversations.filter((c) => c.id !== id),
+      archivedConversations: [updated, ...get().archivedConversations.filter((c) => c.id !== id)],
+      currentConversationId: currentConversationId === id ? null : currentConversationId,
+      conversationMessages: currentConversationId === id ? [] : get().conversationMessages,
+      streams: remainingStreams,
+      lastFailedSend: get().lastFailedSend?.conversationId === id ? null : get().lastFailedSend
+    })
+  },
+
+  async unarchiveConversation(id) {
+    const updated = await window.electronAPI.invoke('conversation:set-archived', {
+      id,
+      archived: false
+    })
+    const { conversations, archivedConversations } = get()
+    set({
+      conversations: [updated, ...conversations],
+      archivedConversations: archivedConversations.filter((c) => c.id !== id)
+    })
   }
 }))

@@ -13,6 +13,8 @@ const zh = {
   'common.search': '搜索',
   'common.back': '返回',
   'common.close': '关闭',
+  'common.prev': '上一页',
+  'common.next': '下一页',
   'common.loading': '加载中...',
   'common.optional': '（可选）',
   'common.notSpecified': '未指定',
@@ -29,7 +31,7 @@ const zh = {
   'common.noResults': '无结果',
 
   // Sidebar
-  'sidebar.title': 'RAG 知识库',
+  'sidebar.title': 'Knowledge Studio',
   'sidebar.hideSidebar': '隐藏侧边栏',
   'sidebar.showSidebar': '显示侧边栏',
   'sidebar.kbManagement': '知识库管理',
@@ -41,6 +43,14 @@ const zh = {
   'sidebar.settings': '设置',
   'sidebar.messageCount': '{n} 条消息',
   'sidebar.documentCount': '{n} 文档',
+  'sidebar.archive': '归档',
+  'sidebar.archived': '已归档对话',
+  'sidebar.unarchive': '取消归档',
+  'sidebar.moreActions': '更多操作',
+  'sidebar.resize': '拖动调整宽度',
+  'archive.title': '已归档的对话',
+  'archive.empty': '暂无归档对话',
+  'archive.restoreHint': '点击右侧的恢复按钮将对话还原至侧边栏',
 
   // AppLayout
   'appLayout.newConversationDefault': '新对话',
@@ -61,7 +71,7 @@ const zh = {
   'category.desc.custom': '自定义分类',
 
   // Home page
-  'home.heroTitle': 'RAG 知识库',
+  'home.heroTitle': 'Knowledge Studio',
   'home.heroDesc':
     '本地优先的知识管理工具，支持 BM25 + 向量嵌入 + 重排序混合检索，结合 GraphRAG 技术实现知识图谱增强搜索。',
   'home.createKb': '新建知识库',
@@ -97,6 +107,7 @@ const zh = {
   'chat.send': '发送',
   'chat.stop': '停止',
   'chat.attachImage': '上传图片',
+  'chat.webSearch': '网络搜索',
   'chat.imageNotSupported': '当前模型不支持图片输入，图片将不会发送给模型',
 
   // Knowledge base page
@@ -142,6 +153,10 @@ const zh = {
   'kbPage.iconAuto': '跟随类型',
   'kbPage.docNamePlaceholder': '输入文档名称...',
   'kbPage.renameFailed': '重命名失败',
+  'kbPage.delete': '删除',
+  'kbPage.deleteConfirmTitle': '确认删除该知识库？',
+  'kbPage.deleteConfirmDesc': '将永久删除该知识库及其所有文档，此操作无法撤销。',
+  'kbPage.deleteFailed': '删除失败',
 
   // Search page
   'searchPage.modeHybrid': '混合检索',
@@ -215,6 +230,13 @@ const zh = {
   'settings.nav.display': '显示',
   'settings.nav.language': '语言',
   'settings.nav.proxy': '网络代理',
+  'settings.nav.search': '搜索设置',
+  'settings.searchDesc': '配置知识库检索的条数。',
+  'settings.searchTopK': '搜索结果条数',
+  'settings.searchTopKDesc': '所有搜索模式返回的最终结果数量。',
+  'settings.embeddingTopK': '向量检索条数',
+  'settings.embeddingTopKDesc': '向量检索的候选数量,用于混合检索的候选池。',
+  'settings.searchHint': '向量检索条数应大于或等于搜索结果条数,以保证混合检索的召回率。',
   'settings.delete': '删除',
   'settings.test': '测试',
   'settings.modelIdPlaceholder': '模型 ID,如 deepseek-chat',
@@ -256,6 +278,7 @@ const zh = {
   'settings.noPrompt': '未设置系统提示词',
   'settings.apiKeyMistral': 'API Key',
   'settings.mistralPlaceholder': '留空则使用本地 pdf-parse 纯文本提取',
+  'settings.mistralKeyHint': '在 Mistral 控制台获取 API Key',
   'settings.apiUrl': 'API 地址',
   'settings.model': '模型',
   'settings.testConnection': '测试连接',
@@ -306,6 +329,9 @@ const zh = {
   'settings.langEn': 'English',
   'settings.langJa': '日本語',
   'settings.langKo': '한국어',
+  'settings.langFr': 'Français',
+  'settings.langDe': 'Deutsch',
+  'settings.langRu': 'Русский',
 
   // Message actions
   'messageActions.copy': '复制',
@@ -365,15 +391,18 @@ const zh = {
   // Mermaid
   'mermaid.renderFailed': 'Mermaid 渲染失败',
   'mermaid.rendering': '渲染中...',
+  'mermaid.generating': '正在生成...',
 
   // SVG
   'svg.domParserUnsupported': '当前环境不支持 DOMParser',
   'svg.parseFailed': 'SVG 解析失败',
   'svg.noSvgRoot': '未找到 <svg> 根元素',
   'svg.renderFailed': 'SVG 渲染失败',
+  'svg.generating': '正在生成...',
 
   // Citation
   'citation.clickToViewFull': '点击查看完整内容',
+  'citation.visitSite': '访问网页',
 
   // Error messages (store-level)
   'error.loadConversationsFailed': '加载对话列表失败',

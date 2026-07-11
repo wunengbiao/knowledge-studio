@@ -1,9 +1,20 @@
-import { useEffect, useState, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Share2, BrainCircuit, Loader2, Network } from 'lucide-react'
+import type { CommunityReport, GraphEntity } from '@shared/types'
+import {
+  ArrowLeft,
+  BrainCircuit,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Loader2,
+  Network,
+  Share2
+} from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from '../i18n'
-import { useKBStore } from '../stores/kb-store'
 import { useGraphStore } from '../stores/graph-store'
+import { useKBStore } from '../stores/kb-store'
 
 export function GraphPage() {
   const { kbId } = useParams<{ kbId: string }>()
@@ -14,11 +25,21 @@ export function GraphPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [selectedEntity, setSelectedEntity] = useState<string | null>(null)
   const [view, setView] = useState<'graph' | 'communities'>('graph')
+  const [entityPage, setEntityPage] = useState(1)
+  const ENTITY_PAGE_SIZE = 100
 
   const { t } = useTranslation()
   const kb = knowledgeBases.find((k) => k.id === kbId)
 
+  const entityMap = useMemo(() => {
+    const m = new Map<string, GraphEntity>()
+    for (const e of entities) m.set(e.id, e)
+    return m
+  }, [entities])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setEntityPage is a stable useState setter; loadGraph is a stable zustand action
   useEffect(() => {
+    setEntityPage(1)
     if (kbId) loadGraph(kbId)
   }, [kbId])
 
@@ -121,7 +142,7 @@ export function GraphPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto px-8 py-8">
+    <div className="h-full overflow-y-auto max-w-5xl mx-auto px-8 py-8">
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <button
@@ -130,7 +151,9 @@ export function GraphPage() {
         >
           <ArrowLeft className="w-5 h-5 text-gray-400" />
         </button>
-        <h1 className="text-lg font-semibold text-gray-900">{t('graphPage.title', { name: kb.name })}</h1>
+        <h1 className="text-lg font-semibold text-gray-900">
+          {t('graphPage.title', { name: kb.name })}
+        </h1>
         <div className="flex-1" />
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
           <button
@@ -236,27 +259,62 @@ export function GraphPage() {
 
           {/* Entity List */}
           <div className="bg-white border border-gray-100 rounded-xl p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('graphPage.entityList')}</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-700">{t('graphPage.entityList')}</h3>
+              <span className="text-xs text-gray-400">
+                {entities.length} 个实体 · 第 {entityPage} /{' '}
+                {Math.max(1, Math.ceil(entities.length / ENTITY_PAGE_SIZE))} 页
+              </span>
+            </div>
             <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
-              {entities.slice(0, 100).map((entity) => (
+              {entities
+                .slice((entityPage - 1) * ENTITY_PAGE_SIZE, entityPage * ENTITY_PAGE_SIZE)
+                .map((entity) => (
+                  <button
+                    key={entity.id}
+                    onClick={() =>
+                      setSelectedEntity(selectedEntity === entity.id ? null : entity.id)
+                    }
+                    className={`px-2.5 py-1 rounded-lg text-xs transition-all ${
+                      selectedEntity === entity.id
+                        ? 'bg-blue-100 text-blue-700 font-medium'
+                        : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {entity.name}
+                    <span className="ml-1 text-[10px] opacity-50">({entity.type})</span>
+                  </button>
+                ))}
+            </div>
+            {entities.length > ENTITY_PAGE_SIZE && (
+              <div className="flex items-center justify-center gap-2 mt-3 pt-3 border-t border-gray-100">
                 <button
-                  key={entity.id}
+                  type="button"
+                  onClick={() => setEntityPage((p) => Math.max(1, p - 1))}
+                  disabled={entityPage <= 1}
+                  className="p-1 rounded-md text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                  aria-label="上一页"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-xs text-gray-500 tabular-nums">
+                  {entityPage} / {Math.ceil(entities.length / ENTITY_PAGE_SIZE)}
+                </span>
+                <button
+                  type="button"
                   onClick={() =>
-                    setSelectedEntity(
-                      selectedEntity === entity.id ? null : entity.id
+                    setEntityPage((p) =>
+                      Math.min(Math.ceil(entities.length / ENTITY_PAGE_SIZE), p + 1)
                     )
                   }
-                  className={`px-2.5 py-1 rounded-lg text-xs transition-all ${
-                    selectedEntity === entity.id
-                      ? 'bg-blue-100 text-blue-700 font-medium'
-                      : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                  }`}
+                  disabled={entityPage >= Math.ceil(entities.length / ENTITY_PAGE_SIZE)}
+                  className="p-1 rounded-md text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                  aria-label="下一页"
                 >
-                  {entity.name}
-                  <span className="ml-1 text-[10px] opacity-50">({entity.type})</span>
+                  <ChevronRight className="w-4 h-4" />
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -268,45 +326,89 @@ export function GraphPage() {
             </div>
           ) : (
             communities.map((community) => (
-              <div
+              <CommunityCard
                 key={community.communityId}
-                className="p-4 bg-white border border-gray-100 rounded-xl"
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                    <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                      {community.communityId}
-                    </span>
-                  </div>
-                  <h3 className="text-sm font-semibold text-gray-900">
-                    {community.title}
-                  </h3>
-                </div>
-                <p className="text-sm text-gray-500 leading-relaxed mb-3">
-                  {community.summary}
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  {community.entities.slice(0, 10).map((eid) => {
-                    const entity = entities.find((e) => e.id === eid)
-                    return entity ? (
-                      <span
-                        key={eid}
-                        className="px-2 py-0.5 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 rounded text-xs"
-                      >
-                        {entity.name}
-                      </span>
-                    ) : null
-                  })}
-                  {community.entities.length > 10 && (
-                    <span className="text-xs text-gray-400">
-                      {t('graphPage.more', { n: community.entities.length - 10 })}
-                    </span>
-                  )}
-                </div>
-              </div>
+                community={community}
+                entityMap={entityMap}
+              />
             ))
           )}
         </div>
+      )}
+    </div>
+  )
+}
+
+function CommunityCard({
+  community,
+  entityMap
+}: {
+  community: CommunityReport
+  entityMap: Map<string, GraphEntity>
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [hasOverflow, setHasOverflow] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setHasOverflow is a stable useState setter; contentRef is a stable ref
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el || expanded) return
+    const check = () => setHasOverflow(el.scrollHeight > el.clientHeight + 1)
+    check()
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [expanded, community.entities.length])
+
+  return (
+    <div className="p-4 bg-white border border-gray-100 rounded-xl">
+      <div className="flex items-center gap-2 mb-2">
+        <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+          <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+            {community.communityId}
+          </span>
+        </div>
+        <h3 className="text-sm font-semibold text-gray-900">{community.title}</h3>
+        <span className="ml-auto text-xs text-gray-400 tabular-nums">
+          {community.entities.length} 个实体
+        </span>
+      </div>
+      <p className="text-sm text-gray-500 leading-relaxed mb-3">{community.summary}</p>
+      <div
+        ref={contentRef}
+        className={`flex flex-wrap gap-1 ${expanded ? '' : 'max-h-7 overflow-hidden'}`}
+      >
+        {community.entities.map((eid) => {
+          const entity = entityMap.get(eid)
+          return entity ? (
+            <span
+              key={eid}
+              className="px-2 py-0.5 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 rounded text-xs"
+            >
+              {entity.name}
+            </span>
+          ) : null
+        })}
+      </div>
+      {(hasOverflow || expanded) && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-2 flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 transition-colors"
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="w-3 h-3" />
+              收起
+            </>
+          ) : (
+            <>
+              <ChevronDown className="w-3 h-3" />
+              展开全部 ({community.entities.length})
+            </>
+          )}
+        </button>
       )}
     </div>
   )

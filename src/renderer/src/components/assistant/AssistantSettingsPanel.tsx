@@ -107,11 +107,6 @@ export function AssistantSelector({
           ))
         )}
       </select>
-      {(onCreate || onEdit) && currentAssistant?.description && (
-        <div className="hidden md:block max-w-[320px] truncate text-xs text-gray-400">
-          {currentAssistant.description}
-        </div>
-      )}
       {onCreate && (
         <button
           type="button"
@@ -127,10 +122,11 @@ export function AssistantSelector({
           type="button"
           onClick={onEdit}
           disabled={!currentAssistant}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors"
+          title={t('common.edit')}
+          aria-label={t('common.edit')}
+          className="inline-flex items-center justify-center w-7 h-7 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-md disabled:opacity-40 disabled:cursor-not-allowed transition-colors dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-800"
         >
-          <Settings2 className="w-3.5 h-3.5" />
-          {t('sidebar.settings')}
+          <Pencil className="w-3.5 h-3.5" />
         </button>
       )}
     </div>

@@ -53,6 +53,7 @@ export interface IpcChannels {
       query: string
       mode: 'bm25' | 'vector' | 'hybrid' | 'graph'
       topK: number
+      embeddingTopK?: number
     }
     response: SearchResult[]
   }
@@ -153,6 +154,11 @@ export interface IpcChannels {
     request: { id: string; assistantId: string | null }
     response: Conversation
   }
+  'conversation:list-archived': { request: undefined; response: Conversation[] }
+  'conversation:set-archived': {
+    request: { id: string; archived: boolean }
+    response: Conversation
+  }
   'conversation:get': {
     request: { id: string }
     response: { conversation: Conversation; messages: Message[] } | null
@@ -164,9 +170,11 @@ export interface IpcChannels {
       kbIds: string[]
       rerankEnabled: boolean
       topK: number
+      embeddingTopK?: number
       llmPresetId?: string
       assistantId?: string
       images?: MessageImage[]
+      webSearch?: boolean
     }
     response: { userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }
   }
@@ -175,11 +183,17 @@ export interface IpcChannels {
   // Message-level actions
   'message:delete': { request: { messageId: string }; response: { deletedIds: string[] } }
   'message:edit': {
-    request: { messageId: string; content: string; images?: MessageImage[] }
+    request: {
+      messageId: string
+      content: string
+      images?: MessageImage[]
+      topK?: number
+      embeddingTopK?: number
+    }
     response: { userMessage: Message; assistantMessageId: string; citations: MessageCitation[] }
   }
   'message:regenerate': {
-    request: { assistantMessageId: string }
+    request: { assistantMessageId: string; topK?: number; embeddingTopK?: number }
     response: { assistantMessageId: string; citations: MessageCitation[] }
   }
   'message:update': {
@@ -212,6 +226,10 @@ export interface IpcChannels {
   'chat:stream-reasoning': {
     request: undefined
     response: { assistantMessageId: string; delta: string }
+  }
+  'chat:stream-citations': {
+    request: undefined
+    response: { assistantMessageId: string; citations: MessageCitation[] }
   }
   'chat:stream-done': {
     request: undefined

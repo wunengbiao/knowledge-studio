@@ -6,10 +6,12 @@ import {
   isValidElement,
   memo,
   useCallback,
+  useContext,
   useState
 } from 'react'
 import { useTranslation } from '../../../i18n'
 import { useKBStore } from '../../../stores/kb-store'
+import { MarkdownStreamingContext } from './MarkdownStreamingContext'
 import { MermaidBlock } from './MermaidBlock'
 import { SvgBlock } from './SvgBlock'
 
@@ -18,6 +20,7 @@ interface CodeBlockProps {
   children?: ReactNode
   inline?: boolean
   variant?: 'user' | 'assistant'
+  node?: { position?: { start?: { line?: number } } }
   // react-markdown will pass through other HTMLAttributes
   [key: string]: unknown
 }
@@ -35,12 +38,14 @@ function CodeBlockImpl({
   children,
   inline,
   variant = 'assistant',
+  node,
   ...rest
 }: CodeBlockProps) {
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
   const wrap = !!useKBStore((s) => s.settings?.codeBlockWordWrap)
   const showLineNumbers = !!useKBStore((s) => s.settings?.codeBlockShowLineNumbers)
+  const { streaming, content } = useContext(MarkdownStreamingContext)
   const match = /language-([\w-+]+)/.exec(className)
   const language = match?.[1] ?? null
   const codeText = childrenToString(children)
@@ -70,7 +75,8 @@ function CodeBlockImpl({
   }
 
   if (language === 'mermaid') {
-    return <MermaidBlock code={codeText} />
+    const complete = isFenceClosed(content, node)
+    return <MermaidBlock code={codeText} complete={complete} streaming={streaming} />
   }
 
   // SVG: explicit ```svg fence, or xml/plain fence whose content is an <svg>…</svg> doc.
@@ -80,7 +86,8 @@ function CodeBlockImpl({
     /^<svg[\s>]/i.test(trimmedCode) &&
     /<\/svg>\s*$/i.test(trimmedCode)
   if (language === 'svg' || isSvgByContent) {
-    return <SvgBlock code={codeText} />
+    const complete = /<\/svg>\s*$/i.test(trimmedCode)
+    return <SvgBlock code={codeText} complete={complete} streaming={streaming} />
   }
 
   const lines = codeText.replace(/\n$/, '').split('\n')
@@ -180,6 +187,35 @@ function CodeBlockImpl({
       {body}
     </div>
   )
+}
+
+/**
+ * Detect whether a fenced code block's closing fence has arrived in the
+ * streaming markdown. Uses the mdast `node.position.start.line` (1-indexed
+ * line of the opening fence) and scans subsequent lines for a matching
+ * closing fence (same char, at least same length). Returns true when the
+ * block is closed OR when no position info / no fence is available (defaults
+ * to "complete" so non-streaming contexts render normally).
+ */
+function isFenceClosed(
+  content: string,
+  node: { position?: { start?: { line?: number } } } | undefined
+): boolean {
+  const startLine = node?.position?.start?.line
+  if (typeof startLine !== 'number') return true
+  const lines = content.split('\n')
+  const openingFenceLine = lines[startLine - 1]
+  if (openingFenceLine === undefined) return true
+  const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(openingFenceLine)
+  if (!fenceMatch) return true
+  const fence = fenceMatch[1]
+  const fenceChar = fence[0]
+  const fenceLen = fence.length
+  const closeRegex = new RegExp(`^\\s*(${fenceChar}{${fenceLen},})\\s*$`)
+  for (let i = startLine; i < lines.length; i++) {
+    if (closeRegex.test(lines[i])) return true
+  }
+  return false
 }
 
 function childrenToString(node: ReactNode): string {

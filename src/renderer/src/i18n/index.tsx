@@ -1,10 +1,21 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useKBStore } from '../stores/kb-store'
+import {
+  type ReactNode,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState
+} from 'react'
 import type { AppLanguage } from '../../../shared/types'
-import zh from './locales/zh'
+import { useKBStore } from '../stores/kb-store'
+import de from './locales/de'
 import en from './locales/en'
+import fr from './locales/fr'
 import ja from './locales/ja'
 import ko from './locales/ko'
+import ru from './locales/ru'
+import zh from './locales/zh'
 
 export type TranslationKey = keyof typeof zh
 
@@ -13,6 +24,9 @@ const dictionaries: Record<AppLanguage, Record<TranslationKey, string>> = {
   en,
   ja,
   ko,
+  fr,
+  de,
+  ru
 }
 
 type InterpolationParams = Record<string, string | number>
@@ -39,7 +53,9 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   const settings = useKBStore((s) => s.settings)
   const updateSettings = useKBStore((s) => s.updateSettings)
 
-  const [language, setLanguageState] = useState<AppLanguage>(settings?.language ?? FALLBACK_LANGUAGE)
+  const [language, setLanguageState] = useState<AppLanguage>(
+    settings?.language ?? FALLBACK_LANGUAGE
+  )
 
   useEffect(() => {
     if (settings?.language && settings.language !== language) {
@@ -52,7 +68,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       setLanguageState(lang)
       void updateSettings({ language: lang })
     },
-    [updateSettings],
+    [updateSettings]
   )
 
   const t = useCallback(
@@ -61,12 +77,12 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       const template = dict[key] ?? dictionaries[FALLBACK_LANGUAGE][key] ?? (key as string)
       return interpolate(template, params)
     },
-    [language],
+    [language]
   )
 
   const value = useMemo<LanguageContextValue>(
     () => ({ language, setLanguage, t }),
-    [language, setLanguage, t],
+    [language, setLanguage, t]
   )
 
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>

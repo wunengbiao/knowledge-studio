@@ -5,6 +5,8 @@ import { useKBStore } from '../../../stores/kb-store'
 
 interface MermaidBlockProps {
   code: string
+  complete?: boolean
+  streaming?: boolean
 }
 
 // Mermaid module singleton — lazy loaded on first render (mirrors cherry-studio's pattern).
@@ -46,7 +48,7 @@ const ZOOM_STEP = 0.15
  *   - drag to pan, ctrl/meta + wheel to zoom
  *   - hover toolbar: zoom in/out, scale %, reset
  */
-function MermaidBlockImpl({ code }: MermaidBlockProps) {
+function MermaidBlockImpl({ code, complete, streaming = false }: MermaidBlockProps) {
   const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const transformRef = useRef({ scale: 1, x: 0, y: 0 })
@@ -58,6 +60,8 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
   const renderIdRef = useRef(`mermaid-${++renderSeq}`)
 
   const trimmed = code.trim()
+  const isIncomplete = complete === false
+  const effectiveShowSource = showSource || isIncomplete
   const wrap = !!useKBStore((s) => s.settings?.codeBlockWordWrap)
   const sourceLines = trimmed.split('\n')
   const sourceLineCount = sourceLines.length
@@ -96,6 +100,11 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
   }, [applyTransform])
 
   useEffect(() => {
+    if (isIncomplete) {
+      setLoading(false)
+      setError(null)
+      return
+    }
     if (showSource || !trimmed) {
       setLoading(false)
       return
@@ -128,11 +137,11 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
     return () => {
       cancelled = true
     }
-  }, [trimmed, showSource, applyTransform])
+  }, [trimmed, showSource, applyTransform, isIncomplete])
 
   // drag-pan
   useEffect(() => {
-    if (showSource || error) return
+    if (isIncomplete || showSource || error) return
     const container = containerRef.current
     if (!container) return
 
@@ -172,11 +181,11 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
     }
-  }, [showSource, error, applyTransform])
+  }, [isIncomplete, showSource, error, applyTransform])
 
   // ctrl/meta + wheel zoom
   useEffect(() => {
-    if (showSource || error) return
+    if (isIncomplete || showSource || error) return
     const container = containerRef.current
     if (!container) return
 
@@ -189,7 +198,7 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
 
     container.addEventListener('wheel', onWheel, { passive: false })
     return () => container.removeEventListener('wheel', onWheel)
-  }, [showSource, error, setScale])
+  }, [isIncomplete, showSource, error, setScale])
 
   const handleCopy = useCallback(async () => {
     try {
@@ -208,24 +217,31 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-200 bg-gray-100">
         <span className="text-[11px] font-mono uppercase tracking-wide text-gray-500">mermaid</span>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setShowSource((v) => !v)}
-            className="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-700 px-1.5 py-0.5 rounded hover:bg-gray-200"
-            aria-label={showSource ? 'Show preview' : 'Show source'}
-          >
-            {showSource ? (
-              <>
-                <Eye className="w-3 h-3" />
-                {t('common.preview')}
-              </>
-            ) : (
-              <>
-                <Code2 className="w-3 h-3" />
-                {t('common.source')}
-              </>
-            )}
-          </button>
+          {streaming && isIncomplete ? (
+            <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 px-1.5 py-0.5">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {t('mermaid.generating')}
+            </span>
+          ) : !isIncomplete ? (
+            <button
+              type="button"
+              onClick={() => setShowSource((v) => !v)}
+              className="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-700 px-1.5 py-0.5 rounded hover:bg-gray-200"
+              aria-label={showSource ? 'Show preview' : 'Show source'}
+            >
+              {showSource ? (
+                <>
+                  <Eye className="w-3 h-3" />
+                  {t('common.preview')}
+                </>
+              ) : (
+                <>
+                  <Code2 className="w-3 h-3" />
+                  {t('common.source')}
+                </>
+              )}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={handleCopy}
@@ -247,7 +263,7 @@ function MermaidBlockImpl({ code }: MermaidBlockProps) {
         </div>
       </div>
 
-      {showSource ? (
+      {effectiveShowSource ? (
         wrap ? (
           <div key="mermaid-source">
             {sourceLines.map((line, i) => {

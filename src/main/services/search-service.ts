@@ -39,7 +39,8 @@ export class SearchService {
     mode: 'bm25' | 'vector' | 'hybrid' | 'graph',
     topK: number,
     onProgress?: EmbeddingProgress,
-    rerankOverride?: ActiveModelRef | null
+    rerankOverride?: ActiveModelRef | null,
+    embeddingTopK?: number
   ): Promise<SearchResult[]> {
     if (mode === 'bm25') {
       const chunks = this.getKbChunks(kbId)
@@ -48,14 +49,15 @@ export class SearchService {
     }
 
     if (mode === 'vector') {
-      return this.vectorSearch(kbId, query, topK, onProgress)
+      return this.vectorSearch(kbId, query, embeddingTopK ?? topK, onProgress)
     }
 
     if (mode === 'hybrid') {
       const chunks = this.getKbChunks(kbId)
       if (chunks.length === 0) return []
-      const bm25Results = this.bm25Search(chunks, query, topK * 2)
-      const vectorResults = await this.vectorSearch(kbId, query, topK * 2, onProgress)
+      const candidateK = embeddingTopK ?? topK * 2
+      const bm25Results = this.bm25Search(chunks, query, candidateK)
+      const vectorResults = await this.vectorSearch(kbId, query, candidateK, onProgress)
       const merged = this.rrfMerge(bm25Results, vectorResults, topK)
       const kb = this.getKb(kbId)
       const effectiveRerank = rerankOverride ?? kb?.rerankModelRef ?? null

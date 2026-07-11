@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom'
 import { AppLayout } from './components/layout/AppLayout'
+import { ArchivedConversationsPage } from './pages/ArchivedConversationsPage'
 import { ChatPage } from './pages/ChatPage'
 import { GraphPage } from './pages/GraphPage'
 import { HomePage } from './pages/HomePage'
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/chat/:id" element={<ChatPage />} />
+        <Route path="/archived" element={<ArchivedConversationsPage />} />
       </Route>
     </Routes>
   )

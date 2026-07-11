@@ -75,7 +75,7 @@ const embeddingStatusBadge: Record<
 export function KnowledgeBasePage() {
   const { kbId } = useParams<{ kbId: string }>()
   const navigate = useNavigate()
-  const { knowledgeBases, updateKB, settings } = useKBStore()
+  const { knowledgeBases, updateKB, deleteKB, settings } = useKBStore()
   const {
     documents,
     uploading,
@@ -104,6 +104,8 @@ export function KnowledgeBasePage() {
   const [editIcon, setEditIcon] = useState<string | null>(null)
   const [editingDocId, setEditingDocId] = useState<string | null>(null)
   const [editingDocTitle, setEditingDocTitle] = useState('')
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const { t } = useTranslation()
   const kb = knowledgeBases.find((k) => k.id === kbId)
@@ -176,6 +178,19 @@ export function KnowledgeBasePage() {
     }
   }
 
+  const handleConfirmDelete = async () => {
+    if (!kb) return
+    setDeleting(true)
+    try {
+      await deleteKB(kb.id)
+      navigate('/')
+    } catch (e) {
+      console.error(t('kbPage.deleteFailed'), e)
+      setDeleting(false)
+      setDeleteConfirmOpen(false)
+    }
+  }
+
   if (!kb) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -211,6 +226,14 @@ export function KnowledgeBasePage() {
             >
               <Pencil className="w-4 h-4" />
               {t('kbPage.edit')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteConfirmOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-all"
+            >
+              <Trash2 className="w-4 h-4" />
+              {t('kbPage.delete')}
             </button>
             <button
               onClick={() => navigate(`/kb/${kbId}/search`)}
@@ -668,6 +691,41 @@ export function KnowledgeBasePage() {
                 >
                   {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   {t('common.save')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {deleteConfirmOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 no-drag">
+            <div className="bg-white rounded-xl shadow-2xl w-[420px] p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-5 h-5 text-red-500" />
+                </div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {t('kbPage.deleteConfirmTitle')}
+                </h2>
+              </div>
+              <p className="text-sm text-gray-500 mb-6">{t('kbPage.deleteConfirmDesc')}</p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmOpen(false)}
+                  disabled={deleting}
+                  className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDelete}
+                  disabled={deleting}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  {t('common.delete')}
                 </button>
               </div>
             </div>

@@ -140,7 +140,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   rerankEnabled: false,
   proxyEnabled: false,
   proxyUrl: '',
-  topK: 10,
+  searchTopK: 10,
+  embeddingTopK: 20,
   dataDir: '',
   mistralApiKey: '',
   mistralApiUrl: 'https://api.mistral.ai/v1/ocr',
@@ -152,7 +153,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   codeFont: 'system',
   codeFontSize: 'md',
   language: 'zh',
-  theme: 'light'
+  theme: 'light',
+  sidebarWidth: 240
 }
 
 export function resolveCapabilityUrl(
@@ -364,7 +366,14 @@ export class SettingsService {
       | { data: string }
       | undefined
     if (!row) return DEFAULT_SETTINGS
-    const stored = { ...DEFAULT_SETTINGS, ...JSON.parse(row.data) } as AppSettings
+    const parsed = JSON.parse(row.data) as Record<string, unknown>
+    const stored = { ...DEFAULT_SETTINGS, ...parsed } as AppSettings
+    if (typeof parsed.topK === 'number' && typeof parsed.searchTopK !== 'number') {
+      stored.searchTopK = parsed.topK
+    }
+    if (typeof parsed.topK === 'number' && typeof parsed.embeddingTopK !== 'number') {
+      stored.embeddingTopK = parsed.topK * 2
+    }
     const migrated = migrateProvidersShape(stored)
     return resolveActiveFlatFields(migrated)
   }
