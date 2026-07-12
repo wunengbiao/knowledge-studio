@@ -318,7 +318,7 @@ export class GraphService {
     for (let start = 0; start < total; start += BATCH) {
       const slice = items.slice(start, start + BATCH)
       const texts = slice.map((e) => `${e.name}: ${e.description}`)
-      const embeddings = await embeddingService.embedBatch(texts, config)
+      const embeddings = await embeddingService.embedBatch(texts, config, undefined, 'passage')
       const persistBatch = this.db.transaction(() => {
         for (let i = 0; i < slice.length; i++) {
           const emb = embeddings[i]

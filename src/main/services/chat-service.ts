@@ -717,6 +717,7 @@ export class ChatService {
                   chunkId: r.chunkId,
                   docId: r.docId,
                   docTitle: r.docTitle,
+                  chunkTitle: r.title,
                   content: r.content,
                   score: r.score
                 })

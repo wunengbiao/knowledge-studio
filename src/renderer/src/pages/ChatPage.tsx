@@ -6,6 +6,7 @@ import {
   ExternalLink,
   FileText,
   Globe,
+  Hash,
   Image as ImageIcon,
   Loader2,
   Paperclip,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { ErrorBoundary } from '../components/ErrorBoundary'
 import { MessageActions } from '../components/chat/MessageActions'
 import { ThinkingBlock } from '../components/chat/ThinkingBlock'
 import { CitationTooltip, MessageMarkdown } from '../components/chat/markdown'
@@ -345,20 +347,21 @@ export function ChatPage() {
   }, [])
 
   const handleSaveEdit = useCallback(() => {
-    setEditingId((currentId) => {
-      if (!currentId) return null
-      const trimmed = editContent.trim()
-      if (!trimmed) return currentId
-      const target = conversationMessages.find((m) => m.id === currentId)
-      if (target?.role === 'assistant') {
-        void updateMessageContent(currentId, trimmed)
-      } else {
-        void editMessage(currentId, trimmed, target?.images)
-      }
-      return null
-    })
+    if (!editingId) return
+    const trimmed = editContent.trim()
+    if (!trimmed) return
+    const target = conversationMessages.find((m) => m.id === editingId)
+    // Run side effects before setEditingId - never inside a state updater
+    // (StrictMode double-invokes updaters + Zustand set during React update
+    // destabilizes the render and blanks the page).
+    if (target?.role === 'assistant') {
+      void updateMessageContent(editingId, trimmed)
+    } else {
+      void editMessage(editingId, trimmed, target?.images)
+    }
+    setEditingId(null)
     setEditContent('')
-  }, [conversationMessages, editContent, editMessage, updateMessageContent])
+  }, [conversationMessages, editContent, editMessage, editingId, updateMessageContent])
 
   const handleCopy = useCallback((msg: Message) => {
     void navigator.clipboard.writeText(msg.content)
@@ -550,22 +553,23 @@ export function ChatPage() {
           )}
 
           {conversationMessages.map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              msg={msg}
-              sending={isStreamingCurrent}
-              streamingThis={!!streams[msg.id]}
-              isEditing={editingId === msg.id}
-              editContent={editingId === msg.id ? editContent : ''}
-              onCitationClick={setActiveCitation}
-              onStartEdit={handleStartEdit}
-              onCancelEdit={handleCancelEdit}
-              onChangeEdit={handleChangeEdit}
-              onSaveEdit={handleSaveEdit}
-              onCopy={handleCopy}
-              onDelete={handleDelete}
-              onRegenerate={handleRegenerate}
-            />
+            <ErrorBoundary key={msg.id}>
+              <MessageBubble
+                msg={msg}
+                sending={isStreamingCurrent}
+                streamingThis={!!streams[msg.id]}
+                isEditing={editingId === msg.id}
+                editContent={editingId === msg.id ? editContent : ''}
+                onCitationClick={setActiveCitation}
+                onStartEdit={handleStartEdit}
+                onCancelEdit={handleCancelEdit}
+                onChangeEdit={handleChangeEdit}
+                onSaveEdit={handleSaveEdit}
+                onCopy={handleCopy}
+                onDelete={handleDelete}
+                onRegenerate={handleRegenerate}
+              />
+            </ErrorBoundary>
           ))}
 
           {isStreamingCurrent &&
@@ -776,6 +780,7 @@ export function ChatPage() {
         (() => {
           const c = activeCitation.citation
           const isWeb = c.kind === 'web'
+          const sectionPath = !isWeb ? c.chunkTitle?.trim() || '' : ''
           const badgeCls = isWeb
             ? 'w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300 flex items-center justify-center shrink-0 font-semibold text-sm'
             : 'w-8 h-8 rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300 flex items-center justify-center shrink-0 font-semibold text-sm'
@@ -805,9 +810,20 @@ export function ChatPage() {
                         <span className="truncate">{c.url}</span>
                       </a>
                     ) : (
-                      <div className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
-                        {t('chat.relevance', { n: ((c.score ?? 0) * 100).toFixed(1) })}
-                      </div>
+                      <>
+                        {sectionPath && (
+                          <div
+                            className="flex items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 min-w-0"
+                            title={sectionPath}
+                          >
+                            <Hash className="w-3 h-3 shrink-0" />
+                            <span className="truncate">{sectionPath}</span>
+                          </div>
+                        )}
+                        <div className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+                          {t('chat.relevance', { n: ((c.score ?? 0) * 100).toFixed(1) })}
+                        </div>
+                      </>
                     )}
                   </div>
                   <button
@@ -1117,7 +1133,11 @@ function renderCitationsInChildren(
                 onClick={() => setActiveCitation({ messageId, citation })}
                 aria-label={t('chat.citationN', {
                   n: idx,
-                  title: citation.docTitle || citation.title || citation.url || ''
+                  title:
+                    [citation.docTitle, citation.chunkTitle].filter(Boolean).join(' · ') ||
+                    citation.title ||
+                    citation.url ||
+                    ''
                 })}
                 className="inline-flex items-center justify-center align-super mx-0.5 min-w-[16px] h-[16px] px-[5px] rounded-full bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors"
               >

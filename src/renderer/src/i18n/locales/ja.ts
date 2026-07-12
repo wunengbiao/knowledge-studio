@@ -145,7 +145,7 @@ const ja: Record<keyof typeof zh, string> = {
   'kbPage.chunkingNote':
     '変更は今後追加するドキュメントにのみ影響し、既存のドキュメントは元のチャンクを維持します。',
   'kbPage.chunkSize': 'チャンクサイズ (文字)',
-  'kbPage.chunkOverlap': 'オーバーラップサイズ (文字)',
+  'kbPage.chunkOverlap': 'オーバーラップ (文数)',
   'kbPage.embeddingModel': 'Embedding モデル',
   'kbPage.notEditable': '編集不可',
   'kbPage.embeddingLocked':
@@ -214,7 +214,7 @@ const ja: Record<keyof typeof zh, string> = {
   'createKb.category': 'タイプ',
   'createKb.chunking': 'ドキュメントチャンク',
   'createKb.chunkSize': 'チャンクサイズ (文字)',
-  'createKb.chunkOverlap': 'オーバーラップサイズ (文字)',
+  'createKb.chunkOverlap': 'オーバーラップ (文数)',
   'createKb.embeddingModel': 'Embedding モデル',
   'createKb.lockedAfterCreate': '作成後にロック',
   'createKb.embeddingDesc': 'Embedding 機能を提供するモデルを選択、設定は作成後にロックされます。',

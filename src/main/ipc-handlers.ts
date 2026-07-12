@@ -346,9 +346,9 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  ipcMain.handle('message:update', async (_e, { messageId, content }) =>
-    chatService.updateMessageContent(messageId, content)
-  )
+  ipcMain.handle('message:update', async (_e, { messageId, content }) => ({
+    message: chatService.updateMessageContent(messageId, content)
+  }))
 
   ipcMain.handle('message:regenerate', async (_e, { assistantMessageId, topK, embeddingTopK }) => {
     const win = BrowserWindow.getAllWindows()[0]

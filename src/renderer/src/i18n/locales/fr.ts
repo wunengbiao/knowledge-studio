@@ -149,7 +149,7 @@ const fr: Record<keyof typeof zh, string> = {
   'kbPage.chunkingNote':
     "Les modifications n'affectent que les nouveaux documents ajoutés ; les documents existants conservent leurs segments d'origine.",
   'kbPage.chunkSize': 'Taille des segments (caractères)',
-  'kbPage.chunkOverlap': 'Chevauchement (caractères)',
+  'kbPage.chunkOverlap': 'Chevauchement (phrases)',
   'kbPage.embeddingModel': "Modèle d'Embedding",
   'kbPage.notEditable': 'Non modifiable',
   'kbPage.embeddingLocked':
@@ -218,7 +218,7 @@ const fr: Record<keyof typeof zh, string> = {
   'createKb.category': 'Catégorie',
   'createKb.chunking': 'Segmentation des documents',
   'createKb.chunkSize': 'Taille des segments (caractères)',
-  'createKb.chunkOverlap': 'Chevauchement (caractères)',
+  'createKb.chunkOverlap': 'Chevauchement (phrases)',
   'createKb.embeddingModel': "Modèle d'Embedding",
   'createKb.lockedAfterCreate': 'Verrouillé après la création',
   'createKb.embeddingDesc':

@@ -26,8 +26,8 @@ export class KnowledgeBaseService {
         embedding_model TEXT DEFAULT '',
         embedding_api_url TEXT DEFAULT '',
         embedding_api_key TEXT DEFAULT '',
-        chunk_size INTEGER DEFAULT 500,
-        chunk_overlap INTEGER DEFAULT 50,
+        chunk_size INTEGER DEFAULT 1000,
+        chunk_overlap INTEGER DEFAULT 2,
         rerank_model_ref TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -41,16 +41,27 @@ export class KnowledgeBaseService {
     }[]
     const colNames = columns.map((c) => c.name)
     if (!colNames.includes('chunk_size')) {
-      this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN chunk_size INTEGER DEFAULT 500')
+      this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN chunk_size INTEGER DEFAULT 1000')
     }
     if (!colNames.includes('chunk_overlap')) {
-      this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN chunk_overlap INTEGER DEFAULT 50')
+      this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN chunk_overlap INTEGER DEFAULT 2')
     }
     if (!colNames.includes('rerank_model_ref')) {
       this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN rerank_model_ref TEXT')
     }
     if (!colNames.includes('icon')) {
       this.db.exec('ALTER TABLE knowledge_bases ADD COLUMN icon TEXT')
+    }
+
+    // Migration: chunk_overlap semantic changed from char count to sentence count.
+    // Old default was 50 (chars); new default is 2 (sentences). Reset any value
+    // clearly from the old char-based regime (>10) to the new sentence default.
+    const staleOverlap = this.db
+      .prepare('SELECT id FROM knowledge_bases WHERE chunk_overlap > 10')
+      .all() as { id: string }[]
+    if (staleOverlap.length > 0) {
+      const reset = this.db.prepare('UPDATE knowledge_bases SET chunk_overlap = 2 WHERE id = ?')
+      for (const kb of staleOverlap) reset.run(kb.id)
     }
   }
 
@@ -75,8 +86,8 @@ export class KnowledgeBaseService {
   }): KnowledgeBase {
     const now = new Date().toISOString()
     const id = uuid()
-    const chunkSize = params.chunkSize ?? 500
-    const chunkOverlap = params.chunkOverlap ?? 50
+    const chunkSize = params.chunkSize ?? 1000
+    const chunkOverlap = params.chunkOverlap ?? 2
     const rerankRef = params.rerankModelRef ? JSON.stringify(params.rerankModelRef) : null
     const icon = params.icon ?? null
     this.db
@@ -169,8 +180,8 @@ export class KnowledgeBaseService {
       embeddingApiUrl: row.embedding_api_url,
       embeddingApiKey: row.embedding_api_key,
       rerankModelRef,
-      chunkSize: row.chunk_size ?? 500,
-      chunkOverlap: row.chunk_overlap ?? 50,
+      chunkSize: row.chunk_size ?? 1000,
+      chunkOverlap: row.chunk_overlap ?? 2,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       documentCount: row.document_count

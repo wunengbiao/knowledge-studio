@@ -61,6 +61,7 @@ export class DocumentService {
         doc_id TEXT NOT NULL,
         content TEXT NOT NULL,
         chunk_index INTEGER NOT NULL,
+        title TEXT DEFAULT '',
         metadata TEXT DEFAULT '{}',
         embedding_status TEXT DEFAULT 'pending',
         embedding_error TEXT DEFAULT '',
@@ -69,7 +70,7 @@ export class DocumentService {
       );
     `)
 
-    // Migration: add embedding columns to pre-existing chunks tables
+    // Migration: add columns to pre-existing chunks tables
     const columns = this.db.prepare('PRAGMA table_info(chunks)').all() as { name: string }[]
     const colNames = columns.map((c) => c.name)
     if (!colNames.includes('embedding_status')) {
@@ -80,6 +81,9 @@ export class DocumentService {
     }
     if (!colNames.includes('embedding_model')) {
       this.db.exec("ALTER TABLE chunks ADD COLUMN embedding_model TEXT DEFAULT ''")
+    }
+    if (!colNames.includes('title')) {
+      this.db.exec("ALTER TABLE chunks ADD COLUMN title TEXT DEFAULT ''")
     }
   }
 
@@ -163,8 +167,8 @@ export class DocumentService {
     }
 
     onProgress?.(50, 100, 'Chunking...')
-    const { chunkSize, chunkOverlap } = this.getKbChunkConfig(kbId)
-    const chunks = this.chunkText(text, chunkSize, chunkOverlap)
+    const { chunkSize, overlapSentences } = this.getKbChunkConfig(kbId)
+    const chunks = this.chunkText(text, chunkSize, overlapSentences)
 
     onProgress?.(80, 100, 'Saving...')
 
@@ -179,10 +183,10 @@ export class DocumentService {
       .run(docId, kbId, title, filePath, sourceType, text, now)
 
     const insertChunk = this.db.prepare(
-      'INSERT INTO chunks (id, doc_id, content, chunk_index) VALUES (?, ?, ?, ?)'
+      'INSERT INTO chunks (id, doc_id, content, chunk_index, title) VALUES (?, ?, ?, ?, ?)'
     )
     for (let i = 0; i < chunks.length; i++) {
-      insertChunk.run(uuid(), docId, chunks[i], i)
+      insertChunk.run(uuid(), docId, chunks[i].content, i, chunks[i].title)
     }
 
     this.db
@@ -240,8 +244,8 @@ export class DocumentService {
     }
 
     onProgress?.(50, 100, '正在分片...')
-    const { chunkSize, chunkOverlap } = this.getKbChunkConfig(kbId)
-    const chunks = this.chunkText(text, chunkSize, chunkOverlap)
+    const { chunkSize, overlapSentences } = this.getKbChunkConfig(kbId)
+    const chunks = this.chunkText(text, chunkSize, overlapSentences)
 
     if (chunks.length === 0) {
       throw new Error('网页内容分片失败：未生成有效分片')
@@ -260,10 +264,10 @@ export class DocumentService {
       .run(docId, kbId, title, url, 'url', text, now)
 
     const insertChunk = this.db.prepare(
-      'INSERT INTO chunks (id, doc_id, content, chunk_index) VALUES (?, ?, ?, ?)'
+      'INSERT INTO chunks (id, doc_id, content, chunk_index, title) VALUES (?, ?, ?, ?, ?)'
     )
     for (let i = 0; i < chunks.length; i++) {
-      insertChunk.run(uuid(), docId, chunks[i], i)
+      insertChunk.run(uuid(), docId, chunks[i].content, i, chunks[i].title)
     }
 
     this.db
@@ -448,6 +452,7 @@ export class DocumentService {
       docId: r.doc_id,
       content: r.content,
       index: r.chunk_index,
+      title: r.title ?? '',
       metadata: JSON.parse(r.metadata || '{}'),
       embeddingStatus: r.embedding_status as EmbeddingStatus | undefined,
       embeddingError: r.embedding_error || undefined
@@ -469,6 +474,7 @@ export class DocumentService {
       docId: r.doc_id,
       content: r.content,
       index: r.chunk_index,
+      title: r.title ?? '',
       metadata: JSON.parse(r.metadata || '{}'),
       embeddingStatus: r.embedding_status as EmbeddingStatus | undefined,
       embeddingError: r.embedding_error || undefined
@@ -533,9 +539,9 @@ export class DocumentService {
 
     const chunks = this.db
       .prepare(
-        "SELECT id, content FROM chunks WHERE doc_id = ? AND embedding_status IN ('pending', 'failed')"
+        "SELECT id, content, title FROM chunks WHERE doc_id = ? AND embedding_status IN ('pending', 'failed')"
       )
-      .all(docId) as { id: string; content: string }[]
+      .all(docId) as { id: string; content: string; title: string }[]
     if (chunks.length === 0) return
 
     this.db
@@ -546,13 +552,14 @@ export class DocumentService {
 
     try {
       const embeddings = await embeddingService.embedBatch(
-        chunks.map((c) => c.content),
+        chunks.map((c) => (c.title ? `${c.title}\n\n${c.content}` : c.content)),
         {
           embeddingApiUrl: kbRow.embedding_api_url,
           embeddingApiKey: kbRow.embedding_api_key,
           embeddingModel: kbRow.embedding_model
         },
-        (cur, total) => onProgress?.(cur, total, `正在向量化分片 ${cur}/${total}`)
+        (cur, total) => onProgress?.(cur, total, `正在向量化分片 ${cur}/${total}`),
+        'passage'
       )
 
       const vectorStore = await VectorStore.getInstance()
@@ -597,35 +604,177 @@ export class DocumentService {
     await this.processEmbeddings(docId, kbId, onProgress)
   }
 
-  private getKbChunkConfig(kbId: string): { chunkSize: number; chunkOverlap: number } {
+  private getKbChunkConfig(kbId: string): { chunkSize: number; overlapSentences: number } {
     const row = this.db
       .prepare('SELECT chunk_size, chunk_overlap FROM knowledge_bases WHERE id = ?')
       .get(kbId) as { chunk_size?: number; chunk_overlap?: number } | undefined
     return {
-      chunkSize: row?.chunk_size ?? 500,
-      chunkOverlap: row?.chunk_overlap ?? 50
+      chunkSize: row?.chunk_size ?? 1000,
+      overlapSentences: row?.chunk_overlap ?? 2
     }
   }
 
-  private chunkText(text: string, chunkSize = 500, overlap = 50): string[] {
-    const chunks: string[] = []
-    const paragraphs = text.split(/\n\s*\n/)
+  private chunkText(
+    text: string,
+    chunkSize = 1000,
+    overlapSentences = 2
+  ): { content: string; title: string }[] {
+    const paragraphs = this.splitParagraphs(text)
+    const chunks: { content: string; title: string }[] = []
     let current = ''
+    let currentTitle = ''
+
+    const startNewChunk = (overlapText: string, firstPara: string, title: string): void => {
+      current = overlapText ? `${overlapText}\n\n${firstPara}` : firstPara
+      currentTitle = title
+    }
 
     for (const para of paragraphs) {
-      const trimmed = para.trim()
-      if (!trimmed) continue
+      if (!para.text) continue
+      if (current === '') currentTitle = para.title
 
-      if (current.length + trimmed.length > chunkSize && current.length > 0) {
-        chunks.push(current.trim())
-        current = current.slice(-overlap) + '\n\n' + trimmed
+      const atomic = this.isAtomicBlock(para.text)
+      const wouldOverflow =
+        current.length > 0 && current.length + para.text.length + 2 > chunkSize
+
+      if (atomic) {
+        if (wouldOverflow) {
+          const overlap = this.lastSentences(current, overlapSentences)
+          chunks.push({ content: current.trim(), title: currentTitle })
+          startNewChunk(overlap, para.text, para.title)
+        } else {
+          current += (current ? '\n\n' : '') + para.text
+        }
+        continue
+      }
+
+      if (para.text.length > chunkSize) {
+        const sentences = this.splitSentences(para.text)
+        for (const sentence of sentences) {
+          if (current.length > 0 && current.length + sentence.length + 2 > chunkSize) {
+            const overlap = this.lastSentences(current, overlapSentences)
+            chunks.push({ content: current.trim(), title: currentTitle })
+            startNewChunk(overlap, sentence, para.title)
+          } else {
+            current += (current && !current.endsWith('\n') ? '\n\n' : '') + sentence
+          }
+        }
+        continue
+      }
+
+      if (wouldOverflow) {
+        const overlap = this.lastSentences(current, overlapSentences)
+        chunks.push({ content: current.trim(), title: currentTitle })
+        startNewChunk(overlap, para.text, para.title)
       } else {
-        current += (current ? '\n\n' : '') + trimmed
+        current += (current ? '\n\n' : '') + para.text
       }
     }
-    if (current.trim()) chunks.push(current.trim())
-
+    if (current.trim()) chunks.push({ content: current.trim(), title: currentTitle })
     return chunks
+  }
+
+  /** Split text into sentences on Chinese (。！？；) and English (.!?) endings.
+   *  Lookbehind keeps the delimiter attached to the preceding sentence. */
+  private splitSentences(text: string): string[] {
+    const parts = text.split(/(?<=[。！？；!?])\s*/)
+    const out: string[] = []
+    for (const p of parts) {
+      const trimmed = p.trim()
+      if (trimmed) out.push(trimmed)
+    }
+    return out
+  }
+
+  /** Return the last `n` sentences of `text` joined with a space. */
+  private lastSentences(text: string, n: number): string {
+    if (n <= 0) return ''
+    const sentences = this.splitSentences(text)
+    if (sentences.length === 0) return ''
+    return sentences.slice(-n).join(' ')
+  }
+
+  /** A paragraph is atomic (must not be split across chunks) if it is a fenced
+   *  code block (``` or ~~~) or a markdown table (header row + separator row). */
+  private isAtomicBlock(text: string): boolean {
+    if (/^\s{0,3}(```|~~~)/.test(text)) return true
+    const lines = text.split('\n')
+    if (
+      lines.length >= 2 &&
+      lines[0].trim().startsWith('|') &&
+      /^[ \t]*\|?[ \t]*[-:]+[-:|\s]+$/.test(lines[1])
+    ) {
+      return true
+    }
+    return false
+  }
+
+  /** Split markdown text into paragraphs, each annotated with the heading breadcrumb
+   *  (up to 4 levels, joined with ` >> `) active at the paragraph's start.
+   *  ATX headings (`#`..`######`) are tracked; only levels 1-4 contribute to the
+   *  breadcrumb. Headings inside fenced code blocks (``` or ~~~) are ignored.
+   *  A heading line starts a new paragraph so the breadcrumb is captured correctly. */
+  private splitParagraphs(text: string): { text: string; title: string }[] {
+    const lines = text.split('\n')
+    const result: { text: string; title: string }[] = []
+    let headingStack: string[] = []
+    let inFence = false
+    let fenceMarker = ''
+    let currentLines: string[] = []
+    let currentTitle = ''
+
+    const flush = (): void => {
+      if (currentLines.length === 0) return
+      const paraText = currentLines.join('\n').trim()
+      if (paraText) result.push({ text: paraText, title: currentTitle })
+      currentLines = []
+    }
+
+    for (const line of lines) {
+      const fenceMatch = line.match(/^\s{0,3}(```|~~~)/)
+      if (fenceMatch) {
+        const marker = fenceMatch[1]
+        if (!inFence) {
+          inFence = true
+          fenceMarker = marker
+        } else if (marker === fenceMarker) {
+          inFence = false
+          fenceMarker = ''
+        }
+        if (currentLines.length === 0) currentTitle = headingStack.join(' >> ')
+        currentLines.push(line)
+        continue
+      }
+
+      if (!inFence) {
+        const headingMatch = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/)
+        if (headingMatch) {
+          flush()
+          const level = headingMatch[1].length
+          const headingText = headingMatch[2].trim()
+          if (level <= 4) {
+            headingStack = headingStack.slice(0, level - 1)
+            headingStack[level - 1] = headingText
+          }
+          currentTitle = headingStack.join(' >> ')
+          currentLines.push(line)
+          continue
+        }
+      }
+
+      if (line.trim() === '') {
+        flush()
+        continue
+      }
+
+      if (currentLines.length === 0) {
+        currentTitle = headingStack.join(' >> ')
+      }
+      currentLines.push(line)
+    }
+    flush()
+
+    return result
   }
 
   private computeDocStatus(docId: string): EmbeddingStatus {
@@ -659,6 +808,7 @@ export class DocumentService {
           docId: c.doc_id,
           content: c.content,
           index: c.chunk_index,
+          title: c.title ?? '',
           metadata: JSON.parse(c.metadata || '{}'),
           embeddingStatus: c.embedding_status as EmbeddingStatus | undefined,
           embeddingError: c.embedding_error || undefined

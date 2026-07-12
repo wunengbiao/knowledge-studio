@@ -21,6 +21,7 @@ interface ChunkRecord {
   doc_id: string
   content: string
   doc_title: string
+  title?: string
 }
 
 export class SearchService {
@@ -55,20 +56,34 @@ export class SearchService {
     if (mode === 'hybrid') {
       const chunks = this.getKbChunks(kbId)
       if (chunks.length === 0) return []
-      const candidateK = embeddingTopK ?? topK * 2
+      const candidateK = embeddingTopK ?? Math.max(topK * 3, 30)
       const bm25Results = this.bm25Search(chunks, query, candidateK)
-      const vectorResults = await this.vectorSearch(kbId, query, candidateK, onProgress)
-      const merged = this.rrfMerge(bm25Results, vectorResults, topK)
+
+      const hydeDoc = await this.generateHydeDocument(query)
+      let vectorResults: SearchResult[]
+      if (hydeDoc) {
+        const kb = this.getKb(kbId)
+        const hydeEmbedding =
+          kb && kb.embeddingApiUrl && kb.embeddingApiKey
+            ? await embeddingService.embed(hydeDoc, {
+                embeddingApiUrl: kb.embeddingApiUrl,
+                embeddingApiKey: kb.embeddingApiKey,
+                embeddingModel: kb.embeddingModel
+              }, 'passage')
+            : null
+        vectorResults = await this.vectorSearch(kbId, query, candidateK, onProgress, hydeEmbedding ?? undefined)
+      } else {
+        vectorResults = await this.vectorSearch(kbId, query, candidateK, onProgress)
+      }
+
+      const merged = this.rrfMerge(bm25Results, vectorResults, candidateK)
       const kb = this.getKb(kbId)
       const effectiveRerank = rerankOverride ?? kb?.rerankModelRef ?? null
       if (effectiveRerank) {
-        try {
-          return await this.rerankResults(query, merged, effectiveRerank)
-        } catch (e) {
-          console.error('[search] rerank failed:', e)
-        }
+        const reranked = await this.rerankResults(query, merged, effectiveRerank)
+        return reranked.slice(0, topK)
       }
-      return merged
+      return merged.slice(0, topK)
     }
 
     if (mode === 'graph') {
@@ -132,6 +147,7 @@ export class SearchService {
       chunkId: chunk.id,
       docId: chunk.doc_id,
       docTitle: chunk.doc_title,
+      title: chunk.title ?? '',
       content: chunk.content.slice(0, 500),
       score,
       source: 'bm25' as const,
@@ -143,7 +159,8 @@ export class SearchService {
     kbId: string,
     query: string,
     topK: number,
-    onProgress?: EmbeddingProgress
+    onProgress?: EmbeddingProgress,
+    queryEmbedding?: number[]
   ): Promise<SearchResult[]> {
     try {
       const kb = this.getKb(kbId)
@@ -152,26 +169,31 @@ export class SearchService {
         throw new Error('该知识库未配置 Embedding API')
       }
 
-      onProgress?.(0, 1, '正在生成查询向量...')
-      const queryEmbedding = await embeddingService.embed(query, {
-        embeddingApiUrl: kb.embeddingApiUrl,
-        embeddingApiKey: kb.embeddingApiKey,
-        embeddingModel: kb.embeddingModel
-      })
-      if (!queryEmbedding) {
+      const embedding =
+        queryEmbedding ??
+        (await embeddingService.embed(
+          query,
+          {
+            embeddingApiUrl: kb.embeddingApiUrl,
+            embeddingApiKey: kb.embeddingApiKey,
+            embeddingModel: kb.embeddingModel
+          },
+          'query'
+        ))
+      if (!embedding) {
         throw new Error('Embedding 服务未返回结果')
       }
 
       onProgress?.(1, 1, '正在检索向量...')
       const vectorStore = await VectorStore.getInstance()
-      const hits = await vectorStore.search(kbId, queryEmbedding, topK)
+      const hits = await vectorStore.search(kbId, embedding, topK)
       if (hits.length === 0) return []
 
       const chunkIds = hits.map((h) => h.chunkId)
       const placeholders = chunkIds.map(() => '?').join(',')
       const rows = this.db
         .prepare(
-          `SELECT c.id, c.doc_id, c.content, d.title as doc_title
+          `SELECT c.id, c.doc_id, c.content, c.title, d.title as doc_title
            FROM chunks c JOIN documents d ON c.doc_id = d.id
            WHERE c.id IN (${placeholders})`
         )
@@ -185,6 +207,7 @@ export class SearchService {
           chunkId: h.chunkId,
           docId: r.doc_id,
           docTitle: r.doc_title,
+          title: r.title ?? '',
           content: r.content.slice(0, 500),
           score: h.score,
           source: 'vector' as const,
@@ -223,7 +246,7 @@ export class SearchService {
     }
 
     onProgress?.(0, 1, '正在生成查询向量...')
-    const queryEmbedding = await embeddingService.embed(query, config)
+    const queryEmbedding = await embeddingService.embed(query, config, 'query')
     if (!queryEmbedding) {
       throw new Error('Embedding 服务未返回结果')
     }
@@ -275,6 +298,7 @@ export class SearchService {
           chunkId: chunk.id,
           docId: chunk.doc_id,
           docTitle: chunk.doc_title,
+          title: chunk.title ?? '',
           content: chunk.content.slice(0, 500),
           score: score * 0.7,
           source: 'graph' as const,
@@ -359,7 +383,7 @@ export class SearchService {
   private getKbChunks(kbId: string): ChunkRecord[] {
     return this.db
       .prepare(
-        `SELECT c.id, c.doc_id, c.content, d.title as doc_title
+        `SELECT c.id, c.doc_id, c.content, c.title, d.title as doc_title
        FROM chunks c
        JOIN documents d ON c.doc_id = d.id
        WHERE d.kb_id = ?
@@ -452,7 +476,7 @@ export class SearchService {
       body: JSON.stringify({
         model: ref.modelId,
         query,
-        documents: results.map((r) => r.content)
+        documents: results.map((r) => (r.title ? `${r.title}\n${r.content}` : r.content))
       }),
       signal: AbortSignal.timeout(30000)
     })
@@ -478,6 +502,56 @@ export class SearchService {
       .map((r, i) => ({ r, score: scoreMap.get(i) ?? 0 }))
       .sort((a, b) => b.score - a.score)
       .map((x) => ({ ...x.r, score: x.score }))
+  }
+
+  /** HyDE (Hypothetical Document Embeddings): ask the app's active chat model to
+   *  generate a short hypothetical answer for the query, then embed that answer
+   *  instead of the raw query. The hypothetical answer's wording is closer to the
+   *  document corpus than the question wording, so vector recall improves.
+   *  Returns null on any failure (no chat model configured, LLM error, timeout) -
+   *  caller falls back to embedding the raw query. */
+  private async generateHydeDocument(query: string): Promise<string | null> {
+    const settings = this.settingsService.get()
+    const activeChat = settings.activeChatModel
+    if (!activeChat) return null
+    const provider = settings.providers.find((p) => p.id === activeChat.providerId)
+    if (!provider) return null
+    const model = provider.models.find((m) => m.id === activeChat.modelId && m.capabilities.chat)
+    if (!model) return null
+
+    const apiUrl = resolveCapabilityUrl(provider, 'chat')
+    try {
+      const response = await net.fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {})
+        },
+        body: JSON.stringify({
+          model: activeChat.modelId,
+          messages: [
+            {
+              role: 'system',
+              content:
+                '你是一个文档生成助手。针对用户的问题，生成一段简短的假设性答案（100-200字），直接给出答案正文，不要加任何前缀、注释或元信息。这段文字将用于语义检索。'
+            },
+            { role: 'user', content: query }
+          ],
+          temperature: 0.3,
+          max_tokens: 300,
+          stream: false
+        }),
+        signal: AbortSignal.timeout(15000)
+      })
+      if (!response.ok) return null
+      const data = await response.json()
+      const content = data?.choices?.[0]?.message?.content
+      const trimmed = typeof content === 'string' ? content.trim() : ''
+      return trimmed.length > 0 ? trimmed : null
+    } catch (e) {
+      console.warn('[HyDE] 生成失败，回退到原始查询:', e)
+      return null
+    }
   }
 
   async testLlm(config: { apiUrl: string; apiKey: string; model: string }): Promise<void> {

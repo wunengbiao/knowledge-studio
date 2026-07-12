@@ -83,7 +83,8 @@ export async function executeKnowledgeSearch(params: {
   const formattedContext = results
     .map((hit, index) => {
       const source = hit.docTitle || hit.docId
-      return `[${startIndex + index}] 来源：${source}\n${hit.content}`
+      const section = hit.title ? ` ｜ 章节：${hit.title}` : ''
+      return `[${startIndex + index}] 来源：${source}${section}\n${hit.content}`
     })
     .join('\n\n---\n\n')
 

@@ -147,7 +147,7 @@ const de: Record<keyof typeof zh, string> = {
   'kbPage.chunkingNote':
     'Änderungen wirken sich nur auf neu hinzugefügte Dokumente aus; bestehende Dokumente behalten ihre ursprünglichen Chunks.',
   'kbPage.chunkSize': 'Chunk-Größe (Zeichen)',
-  'kbPage.chunkOverlap': 'Überlappung (Zeichen)',
+  'kbPage.chunkOverlap': 'Überlappung (Sätze)',
   'kbPage.embeddingModel': 'Embedding-Modell',
   'kbPage.notEditable': 'Nicht bearbeitbar',
   'kbPage.embeddingLocked':
@@ -216,7 +216,7 @@ const de: Record<keyof typeof zh, string> = {
   'createKb.category': 'Kategorie',
   'createKb.chunking': 'Dokument-Chunking',
   'createKb.chunkSize': 'Chunk-Größe (Zeichen)',
-  'createKb.chunkOverlap': 'Überlappung (Zeichen)',
+  'createKb.chunkOverlap': 'Überlappung (Sätze)',
   'createKb.embeddingModel': 'Embedding-Modell',
   'createKb.lockedAfterCreate': 'Nach Erstellung gesperrt',
   'createKb.embeddingDesc':

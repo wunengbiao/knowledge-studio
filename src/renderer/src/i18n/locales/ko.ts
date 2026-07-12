@@ -144,7 +144,7 @@ const ko: Record<keyof typeof zh, string> = {
   'kbPage.chunkingNote':
     '변경은 향후 추가되는 문서에만 적용되며, 기존 문서는 원래 청크를 유지합니다.',
   'kbPage.chunkSize': '청크 크기 (문자)',
-  'kbPage.chunkOverlap': '오버랩 크기 (문자)',
+  'kbPage.chunkOverlap': '오버랩 (문장 수)',
   'kbPage.embeddingModel': 'Embedding 모델',
   'kbPage.notEditable': '편집 불가',
   'kbPage.embeddingLocked': 'Embedding 설정은 생성 시 확정되며, 변경 시 기존 벡터가 무효화됩니다.',
@@ -211,7 +211,7 @@ const ko: Record<keyof typeof zh, string> = {
   'createKb.category': '유형',
   'createKb.chunking': '문서 청킹',
   'createKb.chunkSize': '청크 크기 (문자)',
-  'createKb.chunkOverlap': '오버랩 크기 (문자)',
+  'createKb.chunkOverlap': '오버랩 (문장 수)',
   'createKb.embeddingModel': 'Embedding 모델',
   'createKb.lockedAfterCreate': '생성 후 잠김',
   'createKb.embeddingDesc': 'Embedding 기능을 제공하는 모델을 선택, 설정은 생성 후 잠깁니다.',

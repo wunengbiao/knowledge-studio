@@ -35,6 +35,9 @@ export interface Chunk {
   docId: string
   content: string
   index: number
+  /** Heading breadcrumb (up to 4 levels, joined with ` >> `) captured at chunk time.
+   *  Empty string for non-markdown sources or chunks outside any heading. */
+  title?: string
   metadata: Record<string, string>
   embeddingStatus?: EmbeddingStatus
   embeddingError?: string
@@ -44,6 +47,8 @@ export interface SearchResult {
   chunkId: string
   docId: string
   docTitle: string
+  /** Heading breadcrumb of the matched chunk (e.g. "架构 >> 后端 >> API 规范"). */
+  title?: string
   content: string
   score: number
   source: 'bm25' | 'vector' | 'graph' | 'hybrid'
@@ -141,6 +146,9 @@ export interface MessageCitation {
   chunkId?: string
   docId?: string
   docTitle?: string
+  /** Heading breadcrumb of the cited chunk (e.g. "架构 >> 后端 >> API 规范").
+   *  KB-only; absent on web citations and legacy persisted messages. */
+  chunkTitle?: string
   score?: number
   url?: string
   title?: string

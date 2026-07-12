@@ -27,8 +27,8 @@ const categoryConfig: Record<
   custom: { icon: FolderOpen, labelKey: 'category.custom' }
 }
 
-const DEFAULT_CHUNK_SIZE = 500
-const DEFAULT_CHUNK_OVERLAP = 50
+const DEFAULT_CHUNK_SIZE = 1000
+const DEFAULT_CHUNK_OVERLAP = 2
 
 export function CreateKBModal() {
   const navigate = useNavigate()

@@ -146,7 +146,7 @@ const ru: Record<keyof typeof zh, string> = {
   'kbPage.chunkingNote':
     'Изменения влияют только на новые добавленные документы; существующие документы сохраняют свои фрагменты.',
   'kbPage.chunkSize': 'Размер фрагмента (символы)',
-  'kbPage.chunkOverlap': 'Перекрытие (символы)',
+  'kbPage.chunkOverlap': 'Перекрытие (предложения)',
   'kbPage.embeddingModel': 'Модель эмбеддинга',
   'kbPage.notEditable': 'Не редактируется',
   'kbPage.embeddingLocked':
@@ -215,7 +215,7 @@ const ru: Record<keyof typeof zh, string> = {
   'createKb.category': 'Категория',
   'createKb.chunking': 'Разбиение документов',
   'createKb.chunkSize': 'Размер фрагмента (символы)',
-  'createKb.chunkOverlap': 'Перекрытие (символы)',
+  'createKb.chunkOverlap': 'Перекрытие (предложения)',
   'createKb.embeddingModel': 'Модель эмбеддинга',
   'createKb.lockedAfterCreate': 'Заблокировано после создания',
   'createKb.embeddingDesc':

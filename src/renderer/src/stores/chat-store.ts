@@ -566,9 +566,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         content: trimmed
       })
       const now = new Date().toISOString()
+      const updated = result.message
       set({
         conversationMessages: optimisticMessages.map((m) =>
-          m.id === messageId ? result.message : m
+          m.id === messageId ? (updated ?? m) : m
         ),
         conversations: get().conversations.map((c) =>
           c.id === currentConversationId ? { ...c, updatedAt: now } : c

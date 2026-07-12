@@ -1,5 +1,5 @@
 import type { MessageCitation } from '@shared/types'
-import { ExternalLink, FileText, Globe } from 'lucide-react'
+import { ExternalLink, FileText, Globe, Hash } from 'lucide-react'
 import { type ReactNode, memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from '../../../i18n'
 
@@ -22,6 +22,7 @@ function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
 
   const isWeb = citation.kind === 'web'
   const displayTitle = isWeb ? citation.title || citation.url || '' : citation.docTitle || ''
+  const sectionPath = !isWeb ? citation.chunkTitle?.trim() || '' : ''
 
   useEffect(() => {
     if (!open) return
@@ -117,12 +118,23 @@ function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
                   <span className="truncate">{citation.url}</span>
                 </a>
               ) : (
-                <div className="flex items-center gap-1 mt-0.5 text-[10.5px] text-gray-400 dark:text-gray-500">
-                  <FileText className="w-3 h-3" />
-                  <span>
-                    {t('chat.relevance', { n: ((citation.score ?? 0) * 100).toFixed(1) })}
-                  </span>
-                </div>
+                <>
+                  {sectionPath && (
+                    <div
+                      className="flex items-center gap-1 mt-0.5 text-[10.5px] text-gray-500 dark:text-gray-400"
+                      title={sectionPath}
+                    >
+                      <Hash className="w-3 h-3 shrink-0 text-blue-400 dark:text-blue-400" />
+                      <span className="truncate">{sectionPath}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1 mt-0.5 text-[10.5px] text-gray-400 dark:text-gray-500">
+                    <FileText className="w-3 h-3" />
+                    <span>
+                      {t('chat.relevance', { n: ((citation.score ?? 0) * 100).toFixed(1) })}
+                    </span>
+                  </div>
+                </>
               )}
             </div>
           </div>
