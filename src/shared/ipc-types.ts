@@ -111,6 +111,10 @@ export interface IpcChannels {
     request: { filters: { name: string; extensions: string[] }[] }
     response: string | null
   }
+  'dialog:open-files': {
+    request: { filters: { name: string; extensions: string[] }[] }
+    response: string[] | null
+  }
 
   // Assistants
   'assistant:list': { request: undefined; response: Assistant[] }

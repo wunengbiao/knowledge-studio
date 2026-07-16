@@ -3,13 +3,16 @@ import {
   ArrowLeft,
   BookOpen,
   BrainCircuit,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   Cpu,
   FileText,
   FileType,
   FolderOpen,
   Globe,
+  Hash,
   Layers,
   Link,
   ListOrdered,
@@ -22,6 +25,7 @@ import {
   Stethoscope,
   Trash2,
   Upload,
+  X,
   XCircle
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -82,7 +86,7 @@ export function KnowledgeBasePage() {
     uploadProgress,
     docEmbeddingProgress,
     loadDocuments,
-    uploadFile,
+    uploadFiles,
     importUrl,
     deleteDocument,
     renameDocument,
@@ -106,9 +110,15 @@ export function KnowledgeBasePage() {
   const [editingDocTitle, setEditingDocTitle] = useState('')
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [chunksModalDocId, setChunksModalDocId] = useState<string | null>(null)
+  const [expandedChunkIds, setExpandedChunkIds] = useState<Set<string>>(new Set())
+  const [copiedChunkId, setCopiedChunkId] = useState<string | null>(null)
 
   const { t } = useTranslation()
   const kb = knowledgeBases.find((k) => k.id === kbId)
+  const chunksModalDoc = chunksModalDocId
+    ? documents.find((d) => d.id === chunksModalDocId) ?? null
+    : null
 
   useEffect(() => {
     if (kbId) {
@@ -175,6 +185,39 @@ export function KnowledgeBasePage() {
       await renameDocument(docId, trimmed)
     } catch (e) {
       console.error(t('kbPage.renameFailed'), e)
+    }
+  }
+
+  const openChunksModal = (docId: string) => {
+    setChunksModalDocId(docId)
+    setExpandedChunkIds(new Set())
+    setCopiedChunkId(null)
+  }
+
+  const closeChunksModal = () => {
+    setChunksModalDocId(null)
+    setExpandedChunkIds(new Set())
+    setCopiedChunkId(null)
+  }
+
+  const toggleChunkExpand = (chunkId: string) => {
+    setExpandedChunkIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(chunkId)) next.delete(chunkId)
+      else next.add(chunkId)
+      return next
+    })
+  }
+
+  const handleCopyChunk = async (chunkId: string, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopiedChunkId(chunkId)
+      window.setTimeout(() => {
+        setCopiedChunkId((prev) => (prev === chunkId ? null : prev))
+      }, 1500)
+    } catch (e) {
+      console.error('Copy chunk failed:', e)
     }
   }
 
@@ -256,28 +299,12 @@ export function KnowledgeBasePage() {
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-4">
             <button
-              onClick={() => kbId && uploadFile(kbId, 'docx')}
+              onClick={() => kbId && uploadFiles(kbId)}
               disabled={uploading}
               className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-300 hover:bg-blue-50/50 transition-all disabled:opacity-50"
             >
-              <FileText className="w-4 h-4 text-blue-500" />
-              {t('kbPage.uploadDocx')}
-            </button>
-            <button
-              onClick={() => kbId && uploadFile(kbId, 'pdf')}
-              disabled={uploading}
-              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-300 hover:bg-blue-50/50 transition-all disabled:opacity-50"
-            >
-              <FileType className="w-4 h-4 text-red-500" />
-              {t('kbPage.uploadPdf')}
-            </button>
-            <button
-              onClick={() => kbId && uploadFile(kbId, 'text')}
-              disabled={uploading}
-              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-300 hover:bg-blue-50/50 transition-all disabled:opacity-50"
-            >
-              <FileText className="w-4 h-4 text-gray-500" />
-              {t('kbPage.uploadTxt')}
+              <Upload className="w-4 h-4 text-blue-500" />
+              {t('kbPage.uploadFiles')}
             </button>
             <button
               onClick={() => setShowUrlInput(!showUrlInput)}
@@ -412,12 +439,9 @@ export function KnowledgeBasePage() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => {
-                          setEditingDocId(doc.id)
-                          setEditingDocTitle(doc.title)
-                        }}
-                        className="text-sm font-medium text-gray-900 truncate hover:text-blue-600 transition-colors text-left max-w-full"
-                        title={t('kbPage.docNamePlaceholder')}
+                        onClick={() => openChunksModal(doc.id)}
+                        className="text-sm font-medium text-gray-900 truncate hover:text-blue-600 transition-colors text-left max-w-full cursor-pointer"
+                        title={t('kbPage.viewChunks')}
                       >
                         {doc.title}
                       </button>
@@ -466,6 +490,16 @@ export function KnowledgeBasePage() {
                     )
                   })()}
                   <button
+                    onClick={() => {
+                      setEditingDocId(doc.id)
+                      setEditingDocTitle(doc.title)
+                    }}
+                    className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-blue-50 text-gray-400 hover:text-blue-500 transition-all"
+                    title={t('common.edit')}
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
                     onClick={() => deleteDocument(doc.id)}
                     className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-50 text-gray-400 hover:text-red-500 transition-all"
                   >
@@ -479,10 +513,10 @@ export function KnowledgeBasePage() {
 
         {editOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 no-drag">
-            <div className="bg-white rounded-xl shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">{t('kbPage.editKb')}</h2>
+            <div className="bg-white rounded-xl shadow-2xl w-[480px] max-h-[90vh] overflow-hidden flex flex-col">
+              <h2 className="text-lg font-semibold text-gray-900 px-6 pt-6 pb-4 shrink-0">{t('kbPage.editKb')}</h2>
 
-              <div className="space-y-4">
+              <div className="flex-1 overflow-y-auto px-6 space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {t('kbPage.name')}
@@ -676,7 +710,7 @@ export function KnowledgeBasePage() {
                 )}
               </div>
 
-              <div className="flex justify-end gap-2 mt-6">
+              <div className="flex justify-end gap-2 px-6 pt-6 pb-6 shrink-0">
                 <button
                   onClick={() => setEditOpen(false)}
                   disabled={saving}
@@ -727,6 +761,136 @@ export function KnowledgeBasePage() {
                   {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   {t('common.delete')}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {chunksModalDoc && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 no-drag">
+            <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-[720px] max-w-[90vw] max-h-[85vh] flex flex-col overflow-hidden">
+              {/* Modal Header */}
+              <div className="flex items-center gap-3 p-5 border-b border-gray-100 dark:border-gray-800 shrink-0">
+                {chunksModalDoc.sourceType === 'docx' ? (
+                  <FileText className="w-5 h-5 text-blue-500 shrink-0" />
+                ) : chunksModalDoc.sourceType === 'pdf' ? (
+                  <FileType className="w-5 h-5 text-red-500 shrink-0" />
+                ) : chunksModalDoc.sourceType === 'txt' || chunksModalDoc.sourceType === 'md' ? (
+                  <FileText className="w-5 h-5 text-gray-500 shrink-0" />
+                ) : (
+                  <Globe className="w-5 h-5 text-emerald-500 shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate">
+                    {chunksModalDoc.title}
+                  </h2>
+                  <div className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                    <span>{chunksModalDoc.sourceType.toUpperCase()}</span>
+                    <span>·</span>
+                    <span>{t('kbPage.chunkCount', { n: chunksModalDoc.chunks.length })}</span>
+                    <span>·</span>
+                    <span>{new Date(chunksModalDoc.createdAt).toLocaleString()}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeChunksModal}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors shrink-0"
+                  title={t('common.close')}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                {chunksModalDoc.chunks.length === 0 ? (
+                  <div className="text-center py-12 text-sm text-gray-400 dark:text-gray-500">
+                    {t('kbPage.noChunks')}
+                  </div>
+                ) : (
+                  chunksModalDoc.chunks
+                    .slice()
+                    .sort((a, b) => a.index - b.index)
+                    .map((chunk) => {
+                      const expanded = expandedChunkIds.has(chunk.id)
+                      const hasTitle = !!chunk.title?.trim()
+                      const badge = chunk.embeddingStatus
+                        ? embeddingStatusBadge[chunk.embeddingStatus]
+                        : null
+                      const Icon = badge?.icon
+                      const isProcessing = chunk.embeddingStatus === 'processing'
+                      const contentLong = chunk.content.length > 200
+                      return (
+                        <div
+                          key={chunk.id}
+                          className="border border-gray-100 dark:border-gray-800 rounded-lg overflow-hidden bg-white dark:bg-gray-900"
+                        >
+                          {/* Chunk Header */}
+                          <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+                            <span className="text-xs font-mono font-semibold text-blue-600 dark:text-blue-400 shrink-0">
+                              #{chunk.index + 1}
+                            </span>
+                            {hasTitle ? (
+                              <div className="flex items-center gap-1 min-w-0 flex-1 text-xs text-gray-600 dark:text-gray-300">
+                                <Hash className="w-3 h-3 shrink-0 text-blue-400" />
+                                <span className="truncate" title={chunk.title}>
+                                  {chunk.title}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-400 dark:text-gray-500 italic flex-1">
+                                {t('kbPage.chunkNoTitle')}
+                              </span>
+                            )}
+                            {badge && Icon && (
+                              <span
+                                className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${badge.className}`}
+                              >
+                                <Icon
+                                  className={`w-2.5 h-2.5 ${isProcessing ? 'animate-spin' : ''}`}
+                                />
+                                {t(badge.labelKey)}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleCopyChunk(chunk.id, chunk.content)}
+                              className="text-[10px] text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-blue-950/30 shrink-0 flex items-center gap-1"
+                              title={copiedChunkId === chunk.id ? t('messageActions.copied') : t('common.copy')}
+                            >
+                              {copiedChunkId === chunk.id ? (
+                                <Check className="w-3 h-3 text-emerald-500" />
+                              ) : (
+                                <Copy className="w-3 h-3" />
+                              )}
+                            </button>
+                            {contentLong && (
+                              <button
+                                type="button"
+                                onClick={() => toggleChunkExpand(chunk.id)}
+                                className="text-[10px] text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-blue-950/30 shrink-0"
+                              >
+                                {expanded ? t('kbPage.chunkCollapse') : t('kbPage.chunkExpand')}
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Chunk Content */}
+                          <div
+                            className={`px-3 py-2.5 text-[12.5px] leading-relaxed text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words relative ${
+                              expanded ? '' : 'max-h-24 overflow-hidden'
+                            }`}
+                          >
+                            {chunk.content}
+                            {!expanded && contentLong && (
+                              <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-white dark:from-gray-900 to-transparent pointer-events-none" />
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
+                )}
               </div>
             </div>
           </div>

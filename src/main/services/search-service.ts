@@ -143,16 +143,16 @@ export class SearchService {
     }
 
     scores.sort((a, b) => b.score - a.score)
-    return scores.slice(0, topK).map(({ chunk, score }) => ({
-      chunkId: chunk.id,
-      docId: chunk.doc_id,
-      docTitle: chunk.doc_title,
-      title: chunk.title ?? '',
-      content: chunk.content.slice(0, 500),
-      score,
-      source: 'bm25' as const,
-      highlights: this.highlightTerms(chunk.content, queryTerms)
-    }))
+      return scores.slice(0, topK).map(({ chunk, score }) => ({
+        chunkId: chunk.id,
+        docId: chunk.doc_id,
+        docTitle: chunk.doc_title,
+        title: chunk.title ?? '',
+        content: chunk.content,
+        score,
+        source: 'bm25' as const,
+        highlights: this.highlightTerms(chunk.content, queryTerms)
+      }))
   }
 
   private async vectorSearch(
@@ -208,7 +208,7 @@ export class SearchService {
           docId: r.doc_id,
           docTitle: r.doc_title,
           title: r.title ?? '',
-          content: r.content.slice(0, 500),
+          content: r.content,
           score: h.score,
           source: 'vector' as const,
           highlights: []
@@ -299,7 +299,7 @@ export class SearchService {
           docId: chunk.doc_id,
           docTitle: chunk.doc_title,
           title: chunk.title ?? '',
-          content: chunk.content.slice(0, 500),
+          content: chunk.content,
           score: score * 0.7,
           source: 'graph' as const,
           highlights: [entity.name]
@@ -467,6 +467,11 @@ export class SearchService {
       return results
     }
     const apiUrl = resolveCapabilityUrl(provider, 'rerank')
+    // Snippet-only payload preserves the pre-fix rerank request size; full content stays on SearchResult.
+    const rerankDocs = results.map((r) => {
+      const snippet = r.content.length > 500 ? `${r.content.slice(0, 500)}…` : r.content
+      return r.title ? `${r.title}\n${snippet}` : snippet
+    })
     const response = await net.fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -476,7 +481,7 @@ export class SearchService {
       body: JSON.stringify({
         model: ref.modelId,
         query,
-        documents: results.map((r) => (r.title ? `${r.title}\n${r.content}` : r.content))
+        documents: rerankDocs
       }),
       signal: AbortSignal.timeout(30000)
     })

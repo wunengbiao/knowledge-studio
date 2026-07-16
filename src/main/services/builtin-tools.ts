@@ -84,7 +84,9 @@ export async function executeKnowledgeSearch(params: {
     .map((hit, index) => {
       const source = hit.docTitle || hit.docId
       const section = hit.title ? ` ｜ 章节：${hit.title}` : ''
-      return `[${startIndex + index}] 来源：${source}${section}\n${hit.content}`
+      // Snippet for the LLM; the full chunk content stays on the SearchResult for citation display.
+      const snippet = hit.content.length > 500 ? `${hit.content.slice(0, 500)}…` : hit.content
+      return `[${startIndex + index}] 来源：${source}${section}\n${snippet}`
     })
     .join('\n\n---\n\n')
 

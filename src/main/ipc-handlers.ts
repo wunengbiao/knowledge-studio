@@ -400,4 +400,12 @@ export function registerIpcHandlers(): void {
     })
     return result.canceled ? null : result.filePaths[0]
   })
+
+  ipcMain.handle('dialog:open-files', async (_e, { filters }) => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile', 'multiSelections'],
+      filters
+    })
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths
+  })
 }

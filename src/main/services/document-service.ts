@@ -62,6 +62,7 @@ export class DocumentService {
         content TEXT NOT NULL,
         chunk_index INTEGER NOT NULL,
         title TEXT DEFAULT '',
+        overlap_prefix TEXT DEFAULT '',
         metadata TEXT DEFAULT '{}',
         embedding_status TEXT DEFAULT 'pending',
         embedding_error TEXT DEFAULT '',
@@ -84,6 +85,9 @@ export class DocumentService {
     }
     if (!colNames.includes('title')) {
       this.db.exec("ALTER TABLE chunks ADD COLUMN title TEXT DEFAULT ''")
+    }
+    if (!colNames.includes('overlap_prefix')) {
+      this.db.exec("ALTER TABLE chunks ADD COLUMN overlap_prefix TEXT DEFAULT ''")
     }
   }
 
@@ -183,10 +187,10 @@ export class DocumentService {
       .run(docId, kbId, title, filePath, sourceType, text, now)
 
     const insertChunk = this.db.prepare(
-      'INSERT INTO chunks (id, doc_id, content, chunk_index, title) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO chunks (id, doc_id, content, chunk_index, title, overlap_prefix) VALUES (?, ?, ?, ?, ?, ?)'
     )
     for (let i = 0; i < chunks.length; i++) {
-      insertChunk.run(uuid(), docId, chunks[i].content, i, chunks[i].title)
+      insertChunk.run(uuid(), docId, chunks[i].content, i, chunks[i].title, chunks[i].overlapPrefix)
     }
 
     this.db
@@ -264,10 +268,10 @@ export class DocumentService {
       .run(docId, kbId, title, url, 'url', text, now)
 
     const insertChunk = this.db.prepare(
-      'INSERT INTO chunks (id, doc_id, content, chunk_index, title) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO chunks (id, doc_id, content, chunk_index, title, overlap_prefix) VALUES (?, ?, ?, ?, ?, ?)'
     )
     for (let i = 0; i < chunks.length; i++) {
-      insertChunk.run(uuid(), docId, chunks[i].content, i, chunks[i].title)
+      insertChunk.run(uuid(), docId, chunks[i].content, i, chunks[i].title, chunks[i].overlapPrefix)
     }
 
     this.db
@@ -352,7 +356,12 @@ export class DocumentService {
       }
       return parsed.hostname
     } catch {
-      return url.split('/').pop()?.replace(/\.\w+$/, '') || url
+      return (
+        url
+          .split('/')
+          .pop()
+          ?.replace(/\.\w+$/, '') || url
+      )
     }
   }
 
@@ -539,9 +548,9 @@ export class DocumentService {
 
     const chunks = this.db
       .prepare(
-        "SELECT id, content, title FROM chunks WHERE doc_id = ? AND embedding_status IN ('pending', 'failed')"
+        "SELECT id, content, title, overlap_prefix FROM chunks WHERE doc_id = ? AND embedding_status IN ('pending', 'failed')"
       )
-      .all(docId) as { id: string; content: string; title: string }[]
+      .all(docId) as { id: string; content: string; title: string; overlap_prefix: string }[]
     if (chunks.length === 0) return
 
     this.db
@@ -552,7 +561,10 @@ export class DocumentService {
 
     try {
       const embeddings = await embeddingService.embedBatch(
-        chunks.map((c) => (c.title ? `${c.title}\n\n${c.content}` : c.content)),
+        chunks.map((c) => {
+          const body = c.overlap_prefix ? `${c.overlap_prefix}\n\n${c.content}` : c.content
+          return c.title ? `${c.title}\n\n${body}` : body
+        }),
         {
           embeddingApiUrl: kbRow.embedding_api_url,
           embeddingApiKey: kbRow.embedding_api_key,
@@ -618,15 +630,17 @@ export class DocumentService {
     text: string,
     chunkSize = 1000,
     overlapSentences = 2
-  ): { content: string; title: string }[] {
+  ): { content: string; overlapPrefix: string; title: string }[] {
     const paragraphs = this.splitParagraphs(text)
-    const chunks: { content: string; title: string }[] = []
+    const chunks: { content: string; overlapPrefix: string; title: string }[] = []
     let current = ''
     let currentTitle = ''
+    let currentOverlap = ''
 
     const startNewChunk = (overlapText: string, firstPara: string, title: string): void => {
-      current = overlapText ? `${overlapText}\n\n${firstPara}` : firstPara
+      current = firstPara
       currentTitle = title
+      currentOverlap = overlapText
     }
 
     for (const para of paragraphs) {
@@ -634,13 +648,22 @@ export class DocumentService {
       if (current === '') currentTitle = para.title
 
       const atomic = this.isAtomicBlock(para.text)
-      const wouldOverflow =
-        current.length > 0 && current.length + para.text.length + 2 > chunkSize
+      const wouldOverflow = current.length > 0 && current.length + para.text.length + 2 > chunkSize
 
       if (atomic) {
-        if (wouldOverflow) {
+        // Atomic blocks must never be split. Allow combined size to exceed
+        // chunkSize by up to 50% (the user-defined overflow budget) before
+        // flushing; an oversized atomic block alone is still kept whole.
+        const maxAtomicSize = Math.floor(chunkSize * 1.5)
+        const atomicOverflow =
+          current.length > 0 && current.length + para.text.length + 2 > maxAtomicSize
+        if (atomicOverflow) {
           const overlap = this.lastSentences(current, overlapSentences)
-          chunks.push({ content: current.trim(), title: currentTitle })
+          chunks.push({
+            content: current.trim(),
+            overlapPrefix: currentOverlap,
+            title: currentTitle
+          })
           startNewChunk(overlap, para.text, para.title)
         } else {
           current += (current ? '\n\n' : '') + para.text
@@ -653,7 +676,11 @@ export class DocumentService {
         for (const sentence of sentences) {
           if (current.length > 0 && current.length + sentence.length + 2 > chunkSize) {
             const overlap = this.lastSentences(current, overlapSentences)
-            chunks.push({ content: current.trim(), title: currentTitle })
+            chunks.push({
+              content: current.trim(),
+              overlapPrefix: currentOverlap,
+              title: currentTitle
+            })
             startNewChunk(overlap, sentence, para.title)
           } else {
             current += (current && !current.endsWith('\n') ? '\n\n' : '') + sentence
@@ -664,13 +691,14 @@ export class DocumentService {
 
       if (wouldOverflow) {
         const overlap = this.lastSentences(current, overlapSentences)
-        chunks.push({ content: current.trim(), title: currentTitle })
+        chunks.push({ content: current.trim(), overlapPrefix: currentOverlap, title: currentTitle })
         startNewChunk(overlap, para.text, para.title)
       } else {
         current += (current ? '\n\n' : '') + para.text
       }
     }
-    if (current.trim()) chunks.push({ content: current.trim(), title: currentTitle })
+    if (current.trim())
+      chunks.push({ content: current.trim(), overlapPrefix: currentOverlap, title: currentTitle })
     return chunks
   }
 
@@ -695,9 +723,11 @@ export class DocumentService {
   }
 
   /** A paragraph is atomic (must not be split across chunks) if it is a fenced
-   *  code block (``` or ~~~) or a markdown table (header row + separator row). */
+   *  code block (``` or ~~~, including mermaid), a markdown table, or an
+   *  inline HTML block (SVG / <pre> / <table>) that must stay together. */
   private isAtomicBlock(text: string): boolean {
     if (/^\s{0,3}(```|~~~)/.test(text)) return true
+    if (/^\s*<(svg|pre|table)\b/i.test(text)) return true
     const lines = text.split('\n')
     if (
       lines.length >= 2 &&
@@ -713,13 +743,18 @@ export class DocumentService {
    *  (up to 4 levels, joined with ` >> `) active at the paragraph's start.
    *  ATX headings (`#`..`######`) are tracked; only levels 1-4 contribute to the
    *  breadcrumb. Headings inside fenced code blocks (``` or ~~~) are ignored.
-   *  A heading line starts a new paragraph so the breadcrumb is captured correctly. */
+   *  A heading line starts a new paragraph so the breadcrumb is captured correctly.
+   *
+   *  Fenced code blocks and inline HTML blocks (`<svg>`/`<pre>`/`<table>`) are
+   *  kept in a single paragraph even when they contain blank lines internally,
+   *  so downstream chunking can treat them as atomic. */
   private splitParagraphs(text: string): { text: string; title: string }[] {
     const lines = text.split('\n')
     const result: { text: string; title: string }[] = []
     let headingStack: string[] = []
     let inFence = false
     let fenceMarker = ''
+    let htmlTag = ''
     let currentLines: string[] = []
     let currentTitle = ''
 
@@ -728,6 +763,11 @@ export class DocumentService {
       const paraText = currentLines.join('\n').trim()
       if (paraText) result.push({ text: paraText, title: currentTitle })
       currentLines = []
+    }
+
+    const htmlBlockStart = (line: string): string | null => {
+      const m = line.match(/^\s*<(svg|pre|table)\b/i)
+      return m ? m[1].toLowerCase() : null
     }
 
     for (const line of lines) {
@@ -746,20 +786,46 @@ export class DocumentService {
         continue
       }
 
-      if (!inFence) {
-        const headingMatch = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/)
-        if (headingMatch) {
-          flush()
-          const level = headingMatch[1].length
-          const headingText = headingMatch[2].trim()
-          if (level <= 4) {
-            headingStack = headingStack.slice(0, level - 1)
-            headingStack[level - 1] = headingText
-          }
-          currentTitle = headingStack.join(' >> ')
-          currentLines.push(line)
-          continue
+      // Inside a fenced code block: preserve every line verbatim, including
+      // blank lines, so the block stays in one paragraph.
+      if (inFence) {
+        currentLines.push(line)
+        continue
+      }
+
+      // Inside an inline HTML block: keep content together until the matching
+      // close tag, ignoring blank lines and internal structure.
+      if (htmlTag) {
+        currentLines.push(line)
+        if (new RegExp(`</${htmlTag}>`, 'i').test(line)) {
+          htmlTag = ''
         }
+        continue
+      }
+
+      const startedTag = htmlBlockStart(line)
+      if (startedTag) {
+        htmlTag = startedTag
+        if (currentLines.length === 0) currentTitle = headingStack.join(' >> ')
+        currentLines.push(line)
+        if (new RegExp(`</${startedTag}>`, 'i').test(line)) {
+          htmlTag = ''
+        }
+        continue
+      }
+
+      const headingMatch = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/)
+      if (headingMatch) {
+        flush()
+        const level = headingMatch[1].length
+        const headingText = headingMatch[2].trim()
+        if (level <= 4) {
+          headingStack = headingStack.slice(0, level - 1)
+          headingStack[level - 1] = headingText
+        }
+        currentTitle = headingStack.join(' >> ')
+        currentLines.push(line)
+        continue
       }
 
       if (line.trim() === '') {

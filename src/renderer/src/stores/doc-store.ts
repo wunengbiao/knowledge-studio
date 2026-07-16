@@ -25,7 +25,7 @@ interface DocState {
   currentKbId: string | null
 
   loadDocuments: (kbId: string) => Promise<void>
-  uploadFile: (kbId: string, sourceType: 'docx' | 'pdf' | 'text') => Promise<void>
+  uploadFiles: (kbId: string) => Promise<void>
   importUrl: (kbId: string, url: string) => Promise<void>
   deleteDocument: (docId: string) => Promise<void>
   renameDocument: (docId: string, title: string) => Promise<void>
@@ -60,44 +60,77 @@ export const useDocStore = create<DocState>((set, get) => ({
     set({ documents: docs })
   },
 
-  uploadFile: async (kbId, sourceType) => {
-    const filePath = await window.electronAPI.invoke('dialog:open-file', {
-      filters: [
-        sourceType === 'docx'
-          ? { name: 'Word Documents', extensions: ['docx'] }
-          : sourceType === 'text'
-            ? { name: 'Text / Markdown', extensions: ['txt', 'md', 'markdown'] }
-            : { name: 'PDF Documents', extensions: ['pdf'] }
-      ]
+  uploadFiles: async (kbId) => {
+    const filePaths = await window.electronAPI.invoke('dialog:open-files', {
+      filters: [{ name: 'Documents', extensions: ['docx', 'pdf', 'txt', 'md', 'markdown'] }]
     })
-    if (!filePath) return
-
-    const lowerPath = filePath.toLowerCase()
-    const actualSourceType: 'docx' | 'pdf' | 'txt' | 'md' =
-      sourceType === 'docx'
-        ? 'docx'
-        : sourceType === 'pdf'
-          ? 'pdf'
-          : lowerPath.endsWith('.md') || lowerPath.endsWith('.markdown')
-            ? 'md'
-            : 'txt'
+    if (!filePaths || filePaths.length === 0) return
 
     const mySeq = ++uploadSeq
-    set({ uploading: true, uploadProgress: { current: 0, total: 100, status: 'Starting...' } })
+    const totalFiles = filePaths.length
+    let currentIdx = 0
+
+    set({
+      uploading: true,
+      uploadProgress: { current: 0, total: totalFiles, status: `0 / ${totalFiles}` }
+    })
 
     const cleanup = window.electronAPI.on('progress:indexing', (data) => {
       if (data.kbId !== kbId) return
-      set({ uploadProgress: { current: data.current, total: data.total, status: data.status } })
+      const overall = currentIdx + Math.min(data.current / Math.max(data.total, 1), 1)
+      set({
+        uploadProgress: {
+          current: overall,
+          total: totalFiles,
+          status: `[${currentIdx + 1}/${totalFiles}] ${data.status}`
+        }
+      })
     })
 
+    const uploadedDocs: Document[] = []
+
     try {
-      const doc = await window.electronAPI.invoke('doc:upload', {
-        kbId,
-        filePath,
-        sourceType: actualSourceType
-      })
-      set((s) => ({ documents: [doc, ...s.documents], uploading: false }))
-      useKBStore.getState().loadKnowledgeBases()
+      for (let i = 0; i < filePaths.length; i++) {
+        currentIdx = i
+        const filePath = filePaths[i]
+        const fileName = filePath.split(/[\\/]/).pop() || filePath
+        const lowerPath = filePath.toLowerCase()
+        const sourceType: 'docx' | 'pdf' | 'txt' | 'md' = lowerPath.endsWith('.docx')
+          ? 'docx'
+          : lowerPath.endsWith('.pdf')
+            ? 'pdf'
+            : lowerPath.endsWith('.md') || lowerPath.endsWith('.markdown')
+              ? 'md'
+              : 'txt'
+
+        set({
+          uploadProgress: {
+            current: i,
+            total: totalFiles,
+            status: `[${i + 1}/${totalFiles}] ${fileName}`
+          }
+        })
+
+        try {
+          const doc = await window.electronAPI.invoke('doc:upload', {
+            kbId,
+            filePath,
+            sourceType
+          })
+          if (doc) uploadedDocs.push(doc)
+        } catch (e) {
+          console.error(`[uploadFiles] ${filePath} failed:`, e)
+        }
+      }
+
+      if (uploadedDocs.length > 0) {
+        uploadedDocs.reverse()
+        set((s) => ({ documents: [...uploadedDocs, ...s.documents], uploading: false }))
+        useKBStore.getState().loadKnowledgeBases()
+      } else {
+        set({ uploading: false })
+      }
+
       setTimeout(() => {
         if (mySeq === uploadSeq) set({ uploadProgress: null })
       }, 800)

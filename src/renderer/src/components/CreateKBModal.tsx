@@ -119,15 +119,15 @@ export function CreateKBModal() {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 no-drag"
       onKeyDown={handleKeyDown}
     >
-      <div className="bg-white rounded-xl shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto p-6">
-        <div className="flex items-center gap-2 mb-4">
+      <div className="bg-white rounded-xl shadow-2xl w-[480px] max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="flex items-center gap-2 px-6 pt-6 pb-4 shrink-0">
           <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
             <Plus className="w-4 h-4 text-blue-600" />
           </div>
           <h2 className="text-lg font-semibold text-gray-900">{t('createKb.title')}</h2>
         </div>
 
-        <div className="space-y-4">
+        <div className="flex-1 overflow-y-auto px-6 space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               {t('createKb.name')}
@@ -304,7 +304,7 @@ export function CreateKBModal() {
           )}
         </div>
 
-        <div className="flex justify-end gap-2 mt-6">
+        <div className="flex justify-end gap-2 px-6 pt-6 pb-6 shrink-0">
           <button
             type="button"
             onClick={() => closeCreateModal()}

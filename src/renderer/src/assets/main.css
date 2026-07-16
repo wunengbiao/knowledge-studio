@@ -111,6 +111,23 @@ body {
   animation: msgEnter 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.page-enter {
+  animation: pageEnter 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 @keyframes stopBreathing {
   0%,
   100% {
@@ -159,6 +176,9 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .msg-enter {
+    animation: none;
+  }
+  .page-enter {
     animation: none;
   }
   .stop-breathing {

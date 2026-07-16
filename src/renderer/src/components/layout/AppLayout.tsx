@@ -1,7 +1,7 @@
 import type { Assistant } from '@shared/types'
 import { Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import { useTranslation } from '../../i18n'
 import { useAssistantStore } from '../../stores/assistant-store'
 import { useChatStore } from '../../stores/chat-store'
@@ -12,6 +12,7 @@ import {
   AssistantSelector,
   AssistantSettingsPanel
 } from '../assistant/AssistantSettingsPanel'
+import { AnimatedOutlet } from './AnimatedOutlet'
 import { Sidebar } from './Sidebar'
 
 export function AppLayout() {
@@ -361,7 +362,7 @@ export function AppLayout() {
           </div>
         )}
         <div className="h-full min-h-0 pt-10">
-          <Outlet />
+          <AnimatedOutlet />
         </div>
         <AssistantSettingsPanel
           open={assistantPanelOpen}
