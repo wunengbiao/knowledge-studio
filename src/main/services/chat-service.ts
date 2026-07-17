@@ -6,7 +6,8 @@ import type {
   CustomParamEntry,
   Message,
   MessageCitation,
-  MessageImage
+  MessageImage,
+  ProviderKind
 } from '@shared/types'
 import Database from 'better-sqlite3'
 import { net, app } from 'electron'
@@ -25,6 +26,8 @@ import {
   type ChatCompletionToolCall,
   buildChatCompletionMessages
 } from './chat-message-builder'
+import { formatNetworkError, normalizeOllamaUrl } from './embedding-service'
+import { ollamaCurlStream } from './ollama-fetch'
 import { SearchService } from './search-service'
 import { SettingsService, resolveCapabilityUrl } from './settings-service'
 
@@ -76,6 +79,7 @@ interface ChatModelEndpoint {
   apiKey: string
   model: string
   supportsImage: boolean
+  kind: ProviderKind
 }
 
 export interface StreamEmitter {
@@ -93,6 +97,10 @@ export interface StreamEmitter {
 }
 
 const MAX_TOOL_ROUNDS = 3
+// Auto-continue cap when finish_reason='length': injects an internal-only
+// "继续" user message (not persisted, not shown) so the assistant message
+// keeps growing instead of forcing the user to manually resend.
+const MAX_CONTINUE_ROUNDS = 5
 
 function parseKnowledgeSearchArgs(args: string): { query: string } {
   if (!args.trim()) return { query: '' }
@@ -624,7 +632,7 @@ export class ChatService {
     embeddingTopK?: number
   ): Promise<void> {
     const endpoint = this.resolveChatEndpoint(assistant, llmPresetId)
-    if (!endpoint.apiUrl || !endpoint.apiKey) {
+    if (!endpoint.apiUrl || (endpoint.kind !== 'ollama' && !endpoint.apiKey)) {
       throw new Error('未配置 LLM API，请在设置中填写')
     }
 
@@ -632,7 +640,7 @@ export class ChatService {
     const systemPrompt = this.buildSystemPrompt(assistant.prompt, hasKb, webSearch)
     const history = this.getMessages(conversationId)
     const llmUserMessage = webSearch
-      ? `<time>Today is ：${getCurrentTimeString()}</time>\n${userMessage}`
+      ? `<time>Today is ：${getCurrentTimeString()}, do not mention the time data source in your response.</time>\n${userMessage}`
       : userMessage
     const initialMessages = buildChatCompletionMessages({
       systemPrompt,
@@ -645,12 +653,12 @@ export class ChatService {
       contextCount: assistant.contextCount
     })
 
-    const controller = new AbortController()
+    let controller = new AbortController()
     this.abortControllers.set(assistantId, controller)
-    const timeoutId = setTimeout(() => {
+    let timeoutId = setTimeout(() => {
       this.abortReasons.set(assistantId, 'timeout')
       controller.abort()
-    }, 120000)
+    }, 300000)
 
     const partialContent: string[] = []
     const partialReasoning: string[] = []
@@ -662,32 +670,71 @@ export class ChatService {
     ]
     const tools = toolSchemas.length > 0 ? toolSchemas : undefined
     let workingMessages: ChatCompletionMessage[] = initialMessages
+    let toolRounds = 0
+    let continueRounds = 0
 
     try {
-      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+      while (true) {
         if (controller.signal.aborted) {
           throw new Error('aborted')
         }
-        const isFinalRound = round === MAX_TOOL_ROUNDS
-        const roundTools = isFinalRound ? undefined : tools
+        clearTimeout(timeoutId)
+        timeoutId = setTimeout(() => {
+          this.abortReasons.set(assistantId, 'timeout')
+          controller.abort()
+        }, 300000)
 
-        const result = await this.fetchStreamOnce({
-          endpoint,
-          messages: workingMessages,
-          tools: roundTools,
-          assistant,
-          controller,
-          onDelta: (chunk) => {
-            partialContent.push(chunk)
-            emitter?.onDelta(assistantId, chunk)
-          },
-          onReasoning: (chunk) => {
-            partialReasoning.push(chunk)
-            emitter?.onReasoning(assistantId, chunk)
+        const isFinalToolRound = toolRounds >= MAX_TOOL_ROUNDS
+        const roundTools = isFinalToolRound ? undefined : tools
+
+        let result: {
+          content: string
+          reasoning: string
+          toolCalls: ChatCompletionToolCall[]
+          finishReason: string | null
+        }
+        try {
+          result = await this.fetchStreamOnce({
+            endpoint,
+            messages: workingMessages,
+            tools: roundTools,
+            assistant,
+            controller,
+            onDelta: (chunk) => {
+              partialContent.push(chunk)
+              emitter?.onDelta(assistantId, chunk)
+            },
+            onReasoning: (chunk) => {
+              partialReasoning.push(chunk)
+              emitter?.onReasoning(assistantId, chunk)
+            }
+          })
+        } catch (e) {
+          if (
+            this.abortReasons.get(assistantId) === 'timeout' &&
+            continueRounds < MAX_CONTINUE_ROUNDS &&
+            partialContent.join('').length > 0
+          ) {
+            continueRounds++
+            console.log('[chat:debug] Auto-continue on timeout', {
+              continueRound: continueRounds,
+              maxContinues: MAX_CONTINUE_ROUNDS,
+              partialContentLength: partialContent.join('').length
+            })
+            workingMessages = [
+              ...workingMessages,
+              { role: 'assistant', content: partialContent.join('') },
+              { role: 'user', content: '继续' }
+            ]
+            controller = new AbortController()
+            this.abortControllers.set(assistantId, controller)
+            this.abortReasons.delete(assistantId)
+            continue
           }
-        })
+          throw e
+        }
 
-        if (result.toolCalls.length > 0 && !isFinalRound) {
+        if (result.toolCalls.length > 0 && !isFinalToolRound) {
           workingMessages = [
             ...workingMessages,
             {
@@ -767,10 +814,39 @@ export class ChatService {
           // Mid-stream delivery so the renderer can render chips + inline [n] before onDone.
           emitter?.onCitations(assistantId, finalCitations)
 
+          toolRounds++
           continue
         }
 
-        const fullContent = partialContent.join('')
+        if (
+          result.toolCalls.length === 0 &&
+          result.finishReason === 'length' &&
+          continueRounds < MAX_CONTINUE_ROUNDS
+        ) {
+          continueRounds++
+          console.log('[chat:debug] Auto-continue: response truncated (finish_reason=length)', {
+            continueRound: continueRounds,
+            maxContinues: MAX_CONTINUE_ROUNDS,
+            roundContentLength: result.content.length,
+            cumulativeContentLength: partialContent.join('').length
+          })
+          workingMessages = [
+            ...workingMessages,
+            { role: 'assistant', content: result.content || '' },
+            { role: 'user', content: '继续' }
+          ]
+          continue
+        }
+
+        let fullContent = partialContent.join('')
+        if (result.finishReason === 'length') {
+          console.warn('[chat:debug] Auto-continue exhausted, response still truncated', {
+            continueRounds,
+            maxContinues: MAX_CONTINUE_ROUNDS,
+            contentLength: fullContent.length
+          })
+          fullContent += `\n\n---\n\n⚠️ 回复因达到 max_tokens 上限被截断（已自动续写 ${continueRounds} 次）。请发送"继续"手动续写，或调低 max_tokens 设置。`
+        }
         const fullReasoning = partialReasoning.join('')
         const now = new Date().toISOString()
         this.db
@@ -785,6 +861,23 @@ export class ChatService {
       }
     } catch (e) {
       const reason = this.abortReasons.get(assistantId)
+      if (reason === 'timeout') {
+        const partialJoined = partialContent.join('')
+        if (partialJoined.length > 0) {
+          const reasoning = partialReasoning.join('')
+          const warning = `\n\n---\n\n⚠️ 回复因超时被中断（已自动续写 ${continueRounds} 次）。请发送"继续"手动续写。`
+          const now = new Date().toISOString()
+          this.db
+            .prepare('UPDATE messages SET content = ?, reasoning = ?, created_at = ? WHERE id = ?')
+            .run(partialJoined + warning, reasoning, now, assistantId)
+          this.db
+            .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
+            .run(now, conversationId)
+          emitter?.onDone(assistantId, partialJoined + warning, reasoning, now, finalCitations)
+          return
+        }
+        throw new Error('LLM 响应超时（300秒），请检查网络或稍后重试')
+      }
       if (reason === 'user' || controller.signal.aborted) {
         const content = partialContent.join('')
         const reasoning = partialReasoning.join('')
@@ -797,9 +890,6 @@ export class ChatService {
           .run(now, conversationId)
         emitter?.onDone(assistantId, content, reasoning, now, finalCitations)
         return
-      }
-      if (reason === 'timeout') {
-        throw new Error('LLM 响应超时（120秒），请检查网络或稍后重试')
       }
       throw e
     } finally {
@@ -817,34 +907,134 @@ export class ChatService {
     controller: AbortController
     onDelta: (text: string) => void
     onReasoning: (text: string) => void
-  }): Promise<{ content: string; reasoning: string; toolCalls: ChatCompletionToolCall[] }> {
+  }): Promise<{
+    content: string
+    reasoning: string
+    toolCalls: ChatCompletionToolCall[]
+    finishReason: string | null
+  }> {
     const { endpoint, messages, tools, assistant, controller, onDelta, onReasoning } = params
 
-    const body: Record<string, unknown> = {
-      model: endpoint.model || 'gpt-4o-mini',
-      messages,
-      stream: true,
+    const isOllama = endpoint.kind === 'ollama'
+    const modelParams = {
       ...this.enabledModelParams(assistant.modelParams),
       ...this.customParamsToObject(assistant.modelParams.customParameters)
     }
+    // Ollama uses `num_predict` instead of `max_tokens` in its options object
+    const ollamaOptions: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(modelParams)) {
+      ollamaOptions[k === 'max_tokens' ? 'num_predict' : k] = v
+    }
+    const body: Record<string, unknown> = isOllama
+      ? {
+          model: endpoint.model || 'llama3.2',
+          messages,
+          stream: true,
+          options: ollamaOptions
+        }
+      : {
+          model: endpoint.model || 'gpt-4o-mini',
+          messages,
+          stream: true,
+          ...modelParams
+        }
     if (tools && tools.length > 0) {
       body.tools = tools
-      body.tool_choice = 'auto'
+      if (!isOllama) body.tool_choice = 'auto'
     }
 
     console.log('[chat:debug] LLM request', {
       url: endpoint.apiUrl,
+      kind: endpoint.kind,
       model: endpoint.model,
       hasTools: !!(tools && tools.length > 0),
       toolNames: tools?.map((t) => t.function.name) ?? [],
       toolChoice: tools && tools.length > 0 ? 'auto' : undefined,
       messageCount: messages.length,
-      systemPromptPreview: (messages[0]?.content as string)?.slice(0, 200) ?? ''
+      systemPromptPreview: (messages[0]?.content as string)?.slice(0, 200) ?? '',
+      modelParams,
+      bodyPreview: {
+        model: body.model,
+        stream: body.stream,
+        options: body.options,
+        max_tokens: body.max_tokens,
+        temperature: body.temperature,
+        top_p: body.top_p,
+        hasTools: !!body.tools,
+        toolChoice: body.tool_choice
+      }
     })
 
+    const requestUrl = isOllama ? normalizeOllamaUrl(endpoint.apiUrl, 'chat') : endpoint.apiUrl
+
+    // Ollama (LAN): prefer net.fetch so the macOS Local Network Privacy prompt
+    // fires on first use (curl does not trigger it, and on macOS 26+ curl-from-app
+    // is blocked too). Only the INITIAL connection failure falls back to the curl
+    // stream - mid-stream errors after a successful connect never reach curl,
+    // since restarting the stream would lose partial content and double the work.
+    if (isOllama) {
+      let response: Response
+      try {
+        response = await net.fetch(requestUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        })
+      } catch (_e) {
+        if (controller.signal.aborted) throw _e
+        // Raw connect failure (e.g. LNP block before permission granted, or host
+        // down). Fall back to curl; if curl also fails, throw the ORIGINAL
+        // net.fetch error so formatNetworkError can map EHOSTUNREACH -> Local
+        // Network guidance (curl's "Failed to connect after 2ms" is opaque).
+        console.error('[chat:debug] Ollama net.fetch failed, falling back to curl', {
+          url: requestUrl,
+          originalUrl: endpoint.apiUrl,
+          model: endpoint.model,
+          errorName: _e instanceof Error ? _e.name : typeof _e,
+          errorMessage: _e instanceof Error ? _e.message : String(_e)
+        })
+        try {
+          return await this.readOllamaCurlStream(
+            requestUrl,
+            body,
+            controller.signal,
+            onDelta,
+            onReasoning
+          )
+        } catch (curlE) {
+          if (controller.signal.aborted) throw curlE
+          throw new Error(formatNetworkError(_e, requestUrl))
+        }
+      }
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        console.error('[chat:debug] LLM response not ok', {
+          url: requestUrl,
+          originalUrl: endpoint.apiUrl,
+          kind: endpoint.kind,
+          model: endpoint.model,
+          status: response.status,
+          statusText: response.statusText,
+          bodyPreview: text.slice(0, 500)
+        })
+        throw new Error(this.formatLLMError(response.status, text))
+      }
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('LLM 响应体不可读')
+      const decoder = new TextDecoder()
+      try {
+        return await this.readOllamaStream(reader, decoder, onDelta, onReasoning)
+      } finally {
+        reader.releaseLock()
+      }
+    }
+
+    // Non-Ollama: use Electron's net.fetch (Chromium stack for proxy/cert handling)
     let response: Response
     try {
-      response = await net.fetch(endpoint.apiUrl, {
+      response = await net.fetch(requestUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -857,11 +1047,29 @@ export class ChatService {
       if (controller.signal.aborted) {
         throw _e
       }
-      throw new Error('无法连接到 LLM 服务，请检查 API 地址、网络连接或代理设置')
+      console.error('[chat:debug] LLM fetch error', {
+        url: requestUrl,
+        originalUrl: endpoint.apiUrl,
+        kind: endpoint.kind,
+        model: endpoint.model,
+        errorName: _e instanceof Error ? _e.name : typeof _e,
+        errorMessage: _e instanceof Error ? _e.message : String(_e),
+        errorStack: _e instanceof Error ? _e.stack : undefined
+      })
+      throw new Error(formatNetworkError(_e, requestUrl))
     }
 
     if (!response.ok) {
       const text = await response.text().catch(() => '')
+      console.error('[chat:debug] LLM response not ok', {
+        url: requestUrl,
+        originalUrl: endpoint.apiUrl,
+        kind: endpoint.kind,
+        model: endpoint.model,
+        status: response.status,
+        statusText: response.statusText,
+        bodyPreview: text.slice(0, 500)
+      })
       throw new Error(this.formatLLMError(response.status, text))
     }
 
@@ -893,7 +1101,8 @@ export class ChatService {
       apiUrl: settings.llmApiUrl,
       apiKey: settings.llmApiKey,
       model: settings.llmModel,
-      supportsImage: false
+      supportsImage: false,
+      kind: 'custom'
     }
 
     const providerId = assistant.providerId ?? llmPresetId
@@ -909,7 +1118,8 @@ export class ChatService {
           apiUrl: resolveCapabilityUrl(provider, 'chat'),
           apiKey: provider.apiKey,
           model: chatModel.id,
-          supportsImage: !!chatModel.inputs?.image
+          supportsImage: !!chatModel.inputs?.image,
+          kind: provider.kind
         }
       }
     }
@@ -974,11 +1184,17 @@ export class ChatService {
     decoder: TextDecoder,
     onChunk: (text: string) => void,
     onReasoning: (text: string) => void
-  ): Promise<{ content: string; reasoning: string; toolCalls: ChatCompletionToolCall[] }> {
+  ): Promise<{
+    content: string
+    reasoning: string
+    toolCalls: ChatCompletionToolCall[]
+    finishReason: string | null
+  }> {
     const contentBuffer: string[] = []
     const reasoningBuffer: string[] = []
     const toolCallAccumulator = new Map<number, ChatCompletionToolCall>()
     let leftover = ''
+    let finishReason: string | null = null
 
     streamLoop: while (true) {
       const { done, value } = await reader.read()
@@ -997,7 +1213,8 @@ export class ChatService {
         if (data === '[DONE]') break streamLoop
         try {
           const json: ChatCompletionDelta = JSON.parse(data)
-          const delta = json.choices?.[0]?.delta
+          const choice = json.choices?.[0]
+          const delta = choice?.delta
           const content = delta?.content
           if (content) {
             contentBuffer.push(content)
@@ -1031,6 +1248,9 @@ export class ChatService {
               }
             }
           }
+          if (choice?.finish_reason) {
+            finishReason = choice.finish_reason
+          }
         } catch {}
       }
     }
@@ -1051,12 +1271,202 @@ export class ChatService {
         name: c.function.name,
         argsLength: c.function.arguments.length,
         argsPreview: c.function.arguments.slice(0, 200)
-      }))
+      })),
+      finishReason
     })
     return {
       content: contentBuffer.join(''),
       reasoning: reasoningBuffer.join(''),
-      toolCalls
+      toolCalls,
+      finishReason
+    }
+  }
+
+  private async readOllamaStream(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    decoder: TextDecoder,
+    onChunk: (text: string) => void,
+    onReasoning: (text: string) => void
+  ): Promise<{
+    content: string
+    reasoning: string
+    toolCalls: ChatCompletionToolCall[]
+    finishReason: string | null
+  }> {
+    const contentBuffer: string[] = []
+    const reasoningBuffer: string[] = []
+    const toolCalls: ChatCompletionToolCall[] = []
+    let leftover = ''
+    let finishReason: string | null = null
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const text = decoder.decode(value, { stream: true })
+      leftover += text
+
+      const lines = leftover.split('\n')
+      leftover = lines.pop() || ''
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        let json: {
+          message?: {
+            content?: string
+            thinking?: string
+            tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>
+          }
+          done?: boolean
+          done_reason?: string
+        }
+        try {
+          json = JSON.parse(trimmed)
+        } catch {
+          continue
+        }
+        const content = json.message?.content
+        if (content) {
+          contentBuffer.push(content)
+          onChunk(content)
+        }
+        const thinking = json.message?.thinking
+        if (thinking) {
+          reasoningBuffer.push(thinking)
+          onReasoning(thinking)
+        }
+        const toolCallArr = json.message?.tool_calls
+        if (toolCallArr) {
+          console.log('[chat:debug] Ollama message.tool_calls', JSON.stringify(toolCallArr))
+          for (const tc of toolCallArr) {
+            toolCalls.push({
+              id: '',
+              type: 'function',
+              function: {
+                name: tc.function?.name ?? '',
+                arguments: tc.function?.arguments ?? ''
+              }
+            })
+          }
+        }
+        if (json.done_reason) {
+          finishReason = json.done_reason
+        }
+        if (json.done === true) {
+          console.log('[chat:debug] Ollama stream done', {
+            contentLength: contentBuffer.join('').length,
+            contentPreview: contentBuffer.join('').slice(0, 200),
+            reasoningLength: reasoningBuffer.join('').length,
+            toolCallCount: toolCalls.length,
+            finishReason
+          })
+          return {
+            content: contentBuffer.join(''),
+            reasoning: reasoningBuffer.join(''),
+            toolCalls,
+            finishReason
+          }
+        }
+      }
+    }
+
+    console.log('[chat:debug] Ollama stream ended without done flag', {
+      contentLength: contentBuffer.join('').length,
+      contentPreview: contentBuffer.join('').slice(0, 200),
+      reasoningLength: reasoningBuffer.join('').length,
+      toolCallCount: toolCalls.length,
+      finishReason
+    })
+    return {
+      content: contentBuffer.join(''),
+      reasoning: reasoningBuffer.join(''),
+      toolCalls,
+      finishReason
+    }
+  }
+
+  // curl-based fallback for readOllamaStream. The primary Ollama streaming path
+  // uses net.fetch + readOllamaStream (which triggers the macOS Local Network
+  // Privacy prompt on first use). This curl variant is reached only when the
+  // initial net.fetch connection fails - on macOS 26+ without Local Network
+  // permission curl fails too, but the net.fetch attempt has already surfaced
+  // the permission prompt. On older macOS or for non-LNP net.fetch failures,
+  // curl may still succeed.
+  private async readOllamaCurlStream(
+    url: string,
+    body: Record<string, unknown>,
+    signal: AbortSignal,
+    onChunk: (text: string) => void,
+    onReasoning: (text: string) => void
+  ): Promise<{
+    content: string
+    reasoning: string
+    toolCalls: ChatCompletionToolCall[]
+    finishReason: string | null
+  }> {
+    const contentBuffer: string[] = []
+    const reasoningBuffer: string[] = []
+    const toolCalls: ChatCompletionToolCall[] = []
+    let finishReason: string | null = null
+
+    for await (const json of ollamaCurlStream(url, body, signal)) {
+      const content = json.message?.content
+      if (content) {
+        contentBuffer.push(content)
+        onChunk(content)
+      }
+      const thinking = json.message?.thinking
+      if (thinking) {
+        reasoningBuffer.push(thinking)
+        onReasoning(thinking)
+      }
+      const toolCallArr = json.message?.tool_calls
+      if (toolCallArr) {
+        console.log('[chat:debug] Ollama message.tool_calls', JSON.stringify(toolCallArr))
+        for (const tc of toolCallArr) {
+          toolCalls.push({
+            id: '',
+            type: 'function',
+            function: {
+              name: tc.function?.name ?? '',
+              arguments: tc.function?.arguments ?? ''
+            }
+          })
+        }
+      }
+      if (json.done_reason) {
+        finishReason = json.done_reason
+      }
+      if (json.done === true) {
+        console.log('[chat:debug] Ollama stream done', {
+          contentLength: contentBuffer.join('').length,
+          contentPreview: contentBuffer.join('').slice(0, 200),
+          reasoningLength: reasoningBuffer.join('').length,
+          toolCallCount: toolCalls.length,
+          finishReason
+        })
+        return {
+          content: contentBuffer.join(''),
+          reasoning: reasoningBuffer.join(''),
+          toolCalls,
+          finishReason
+        }
+      }
+    }
+
+    console.log('[chat:debug] Ollama stream ended without done flag', {
+      contentLength: contentBuffer.join('').length,
+      contentPreview: contentBuffer.join('').slice(0, 200),
+      reasoningLength: reasoningBuffer.join('').length,
+      toolCallCount: toolCalls.length,
+      finishReason
+    })
+    return {
+      content: contentBuffer.join(''),
+      reasoning: reasoningBuffer.join(''),
+      toolCalls,
+      finishReason
     }
   }
 

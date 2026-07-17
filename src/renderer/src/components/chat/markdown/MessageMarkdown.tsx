@@ -1,7 +1,9 @@
 import { type ReactNode, memo, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
+import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
 import { MarkdownStreamingContext, type MarkdownStreamingValue } from './MarkdownStreamingContext'
 import { useChatMarkdownComponents } from './useChatMarkdownComponents'
 
@@ -77,9 +79,13 @@ function injectStreamCursor(container: HTMLElement, breathe: boolean): void {
  * Chat-message markdown renderer.
  *
  * Mirrors cherry-studio's `ChatMarkdown` architecture: a thin component that
- * composes `remark-gfm` + `rehype-highlight` with the chat-flavored
- * `useChatMarkdownComponents` map (CodeBlock / Table / Link / heading
- * scaling / citation hook). Project-local: no streamdown / @cherrystudio/ui
+ * composes `remark-gfm` + `remark-math` + `rehype-katex` + `rehype-highlight`
+ * with the chat-flavored `useChatMarkdownComponents` map (CodeBlock / Table /
+ * Link / heading scaling / citation hook). Math: inline `$...$` and display
+ * `$$...$$` are parsed by `remark-math`, then rendered to KaTeX HTML by
+ * `rehype-katex` - which MUST run before `rehype-highlight` so the latter
+ * does not wrap math nodes in `<code class="hljs">`. KaTeX CSS is imported
+ * once in `main.tsx`. Project-local: no streamdown / @cherrystudio/ui
  * dependency - uses the existing `react-markdown` stack.
  */
 function MessageMarkdownImpl({
@@ -140,8 +146,8 @@ function MessageMarkdownImpl({
         className={`chat-markdown overflow-hidden text-sm leading-relaxed ${baseText} ${className ?? ''}`}
       >
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[rehypeKatex, rehypeHighlight]}
           components={components}
         >
           {content}

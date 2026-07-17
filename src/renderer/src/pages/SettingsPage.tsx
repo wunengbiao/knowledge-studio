@@ -194,6 +194,7 @@ const PROVIDER_KIND_BADGE: Record<ProviderKind, string> = {
   nvidia: 'NVIDIA',
   mistral: 'Mistral',
   gemini: 'Gemini',
+  ollama: 'Ollama',
   custom: 'Custom'
 }
 
@@ -202,6 +203,7 @@ const PROVIDER_KIND_COLOR: Record<ProviderKind, string> = {
   nvidia: 'bg-emerald-500',
   mistral: 'bg-orange-500',
   gemini: 'bg-blue-500',
+  ollama: 'bg-slate-600',
   custom: 'bg-gray-400'
 }
 

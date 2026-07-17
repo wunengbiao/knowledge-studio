@@ -103,6 +103,68 @@ const BUILTIN_PROVIDERS: Provider[] = [
         capabilities: { chat: false, embedding: true, rerank: false }
       }
     ]
+  },
+  {
+    id: 'builtin:ollama',
+    name: 'Ollama',
+    kind: 'ollama',
+    isBuiltIn: true,
+    apiKey: '',
+    apiHost: 'http://localhost:11434',
+    models: [
+      {
+        id: 'llama3.2',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
+      },
+      {
+        id: 'llama3.3',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
+      },
+      {
+        id: 'qwen2.5',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
+      },
+      {
+        id: 'qwen2.5-coder',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
+      },
+      {
+        id: 'qwen3',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
+      },
+      {
+        id: 'deepseek-r1',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: false }
+      },
+      {
+        id: 'llava',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: true }
+      },
+      {
+        id: 'llama3.2-vision',
+        capabilities: { chat: true, embedding: false, rerank: false },
+        inputs: { text: true, image: true }
+      },
+      {
+        id: 'nomic-embed-text',
+        capabilities: { chat: false, embedding: true, rerank: false }
+      },
+      {
+        id: 'bge-m3',
+        capabilities: { chat: false, embedding: true, rerank: false }
+      },
+      {
+        id: 'mxbai-embed-large',
+        capabilities: { chat: false, embedding: true, rerank: false }
+      }
+    ]
   }
 ]
 
@@ -163,6 +225,13 @@ export function resolveCapabilityUrl(
 ): string {
   const host = provider.apiHost.replace(/\/+$/, '')
   if (!host) return ''
+  // Detect Ollama by kind OR URL heuristic (covers custom providers pointing to Ollama hosts)
+  const isOllama = provider.kind === 'ollama' || host.includes(':11434') || host.includes('ollama')
+  if (isOllama) {
+    if (capability === 'chat') return `${host}/api/chat`
+    if (capability === 'embedding') return `${host}/api/embed`
+    return ''
+  }
   if (capability === 'chat') return `${host}/chat/completions`
   if (capability === 'embedding') return `${host}/embeddings`
   return provider.kind === 'nvidia' ? `${host}/ranking` : `${host}/rerank`
@@ -297,6 +366,14 @@ function migrateProvidersShape(s: AppSettings): AppSettings {
   const reshaped = s.providers
     .map((p) => reshapeOldProvider(p as Provider & Record<string, unknown>))
     .map(normalizeProviderModels)
+  // Merge in newly-added builtin providers (e.g. ollama) that are missing from
+  // the persisted list. Match by id so user customizations to existing builtins
+  // (apiKey/apiHost/models) are preserved; only absent builtins are appended.
+  const existingBuiltinIds = new Set(reshaped.map((p) => p.id))
+  const missingBuiltins = BUILTIN_PROVIDERS.filter((p) => !existingBuiltinIds.has(p.id)).map(
+    (p) => ({ ...p })
+  )
+  const providers = [...reshaped, ...missingBuiltins]
   const oldShape = s as AppSettings & {
     activeLlmProviderId?: string
     activeEmbeddingProviderId?: string
@@ -310,7 +387,7 @@ function migrateProvidersShape(s: AppSettings): AppSettings {
     if (existing && existing.providerId && existing.modelId) return existing
     const pid = legacyProviderId
     if (!pid) return null
-    const provider = reshaped.find((p) => p.id === pid)
+    const provider = providers.find((p) => p.id === pid)
     if (!provider) return null
     const model = provider.models.find((m) => m.capabilities[capability])
     if (!model) return null
@@ -318,7 +395,7 @@ function migrateProvidersShape(s: AppSettings): AppSettings {
   }
   return {
     ...s,
-    providers: reshaped,
+    providers,
     activeChatModel:
       inferRef(s.activeChatModel, oldShape.activeLlmProviderId, 'chat') ??
       DEFAULT_SETTINGS.activeChatModel,

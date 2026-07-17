@@ -8,7 +8,7 @@ import type {
 } from '@shared/types'
 import Database from 'better-sqlite3'
 import { net, app } from 'electron'
-import { embeddingService } from './embedding-service'
+import { embeddingService, isOllamaUrl } from './embedding-service'
 import { GraphService } from './graph-service'
 import { SettingsService, resolveCapabilityUrl } from './settings-service'
 import { tokenize } from './tokenizer'
@@ -44,9 +44,7 @@ export class SearchService {
     embeddingTopK?: number
   ): Promise<SearchResult[]> {
     if (mode === 'bm25') {
-      const chunks = this.getKbChunks(kbId)
-      if (chunks.length === 0) return []
-      return this.bm25Search(chunks, query, topK)
+      return this.ftsSearch(kbId, query, topK)
     }
 
     if (mode === 'vector') {
@@ -54,10 +52,8 @@ export class SearchService {
     }
 
     if (mode === 'hybrid') {
-      const chunks = this.getKbChunks(kbId)
-      if (chunks.length === 0) return []
       const candidateK = embeddingTopK ?? Math.max(topK * 3, 30)
-      const bm25Results = this.bm25Search(chunks, query, candidateK)
+      const bm25Results = await this.ftsSearch(kbId, query, candidateK)
 
       const hydeDoc = await this.generateHydeDocument(query)
       let vectorResults: SearchResult[]
@@ -93,66 +89,41 @@ export class SearchService {
     return []
   }
 
-  private bm25Search(chunks: ChunkRecord[], query: string, topK: number): SearchResult[] {
-    const k1 = 1.5
-    const b = 0.75
+  private async ftsSearch(kbId: string, query: string, topK: number): Promise<SearchResult[]> {
     const queryTerms = tokenize(query)
     if (queryTerms.length === 0) return []
 
-    const docCount = chunks.length
+    const vectorStore = await VectorStore.getInstance()
+    await vectorStore.ensureFtsReady(kbId)
+    const hits = await vectorStore.ftsSearch(kbId, query, topK)
+    if (hits.length === 0) return []
 
-    const docStats = chunks.map((chunk) => {
-      const tokens = tokenize(chunk.content)
-      const tokenFreq: Map<string, number> = new Map()
-      for (const t of tokens) {
-        tokenFreq.set(t, (tokenFreq.get(t) || 0) + 1)
-      }
-      return { chunk, tokenFreq, docLen: tokens.length }
-    })
+    const chunkIds = hits.map((h) => h.chunkId)
+    const placeholders = chunkIds.map(() => '?').join(',')
+    const rows = this.db
+      .prepare(
+        `SELECT c.id, c.doc_id, c.content, c.title, d.title as doc_title
+         FROM chunks c JOIN documents d ON c.doc_id = d.id
+         WHERE c.id IN (${placeholders})`
+      )
+      .all(...chunkIds) as ChunkRecord[]
+    const rowMap = new Map(rows.map((r) => [r.id, r]))
 
-    const totalLen = docStats.reduce((sum, d) => sum + d.docLen, 0)
-    const avgDl = totalLen / docCount
-
-    const termDocFreq: Map<string, number> = new Map()
-    for (const term of queryTerms) {
-      const df = docStats.filter((d) => d.tokenFreq.has(term)).length
-      termDocFreq.set(term, df)
-    }
-
-    const scores: { chunk: ChunkRecord; score: number }[] = []
-
-    for (const { chunk, tokenFreq, docLen } of docStats) {
-      let score = 0
-
-      for (const term of queryTerms) {
-        const df = termDocFreq.get(term) || 0
-        if (df === 0) continue
-
-        const tf = tokenFreq.get(term) || 0
-        if (tf === 0) continue
-
-        const idf = Math.log((docCount - df + 0.5) / (df + 0.5) + 1)
-        const numerator = tf * (k1 + 1)
-        const denominator = tf + k1 * (1 - b + b * (docLen / avgDl))
-        score += idf * (numerator / denominator)
-      }
-
-      if (score > 0) {
-        scores.push({ chunk, score })
-      }
-    }
-
-    scores.sort((a, b) => b.score - a.score)
-      return scores.slice(0, topK).map(({ chunk, score }) => ({
-        chunkId: chunk.id,
-        docId: chunk.doc_id,
-        docTitle: chunk.doc_title,
-        title: chunk.title ?? '',
-        content: chunk.content,
-        score,
-        source: 'bm25' as const,
-        highlights: this.highlightTerms(chunk.content, queryTerms)
-      }))
+    return hits
+      .filter((h) => rowMap.has(h.chunkId))
+      .map((h) => {
+        const r = rowMap.get(h.chunkId)!
+        return {
+          chunkId: h.chunkId,
+          docId: r.doc_id,
+          docTitle: r.doc_title,
+          title: r.title ?? '',
+          content: r.content,
+          score: h.score,
+          source: 'bm25' as const,
+          highlights: this.highlightTerms(r.content, queryTerms)
+        }
+      })
   }
 
   private async vectorSearch(
@@ -165,7 +136,8 @@ export class SearchService {
     try {
       const kb = this.getKb(kbId)
       if (!kb) throw new Error('知识库不存在')
-      if (!kb.embeddingApiUrl || !kb.embeddingApiKey) {
+      const isOllama = !!kb.embeddingApiUrl && isOllamaUrl(kb.embeddingApiUrl)
+      if (!kb.embeddingApiUrl || (!isOllama && !kb.embeddingApiKey)) {
         throw new Error('该知识库未配置 Embedding API')
       }
 
@@ -229,14 +201,12 @@ export class SearchService {
       .prepare('SELECT 1 AS has FROM graph_entities WHERE kb_id = ? LIMIT 1')
       .get(kbId) as { has: number } | undefined
     if (!entityExists) {
-      const chunks = this.getKbChunks(kbId)
-      return this.bm25Search(chunks, query, topK)
+      return this.ftsSearch(kbId, query, topK)
     }
 
     const kb = this.getKb(kbId)
     if (!kb || !kb.embeddingApiUrl || !kb.embeddingApiKey) {
-      const chunks = this.getKbChunks(kbId)
-      return this.bm25Search(chunks, query, topK)
+      return this.ftsSearch(kbId, query, topK)
     }
 
     const config = {
@@ -307,8 +277,8 @@ export class SearchService {
       }
     }
 
-    const bm25Results = this.bm25Search(chunks, query, topK)
-    return this.rrfMerge(results, bm25Results, topK)
+    const ftsResults = await this.ftsSearch(kbId, query, topK)
+    return this.rrfMerge(results, ftsResults, topK)
   }
 
   private rrfMerge(
@@ -563,21 +533,35 @@ export class SearchService {
     if (!config.apiUrl) {
       throw new Error('未配置 LLM API 地址')
     }
-    if (!config.apiKey) {
+    const isOllama =
+      config.apiUrl.includes('ollama') ||
+      config.apiUrl.includes(':11434') ||
+      config.apiUrl.includes('/api/chat')
+    if (!isOllama && !config.apiKey) {
       throw new Error('未配置 LLM API Key')
     }
     const response = await net.fetch(config.apiUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`
-      },
-      body: JSON.stringify({
-        model: config.model || 'gpt-4o-mini',
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 1,
-        stream: false
-      }),
+      headers: isOllama
+        ? { 'Content-Type': 'application/json' }
+        : {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${config.apiKey}`
+          },
+      body: JSON.stringify(
+        isOllama
+          ? {
+              model: config.model || 'llama3.2',
+              messages: [{ role: 'user', content: 'ping' }],
+              stream: false
+            }
+          : {
+              model: config.model || 'gpt-4o-mini',
+              messages: [{ role: 'user', content: 'ping' }],
+              max_tokens: 1,
+              stream: false
+            }
+      ),
       signal: AbortSignal.timeout(15000)
     })
     if (!response.ok) {
@@ -593,7 +577,22 @@ export class SearchService {
   }): Promise<{ id: string; name?: string; ownedBy?: string }[]> {
     const apiHost = (config.apiHost || '').replace(/\/+$/, '')
     if (!apiHost) throw new Error('未配置 API Host')
-    if (!config.apiKey) throw new Error('未配置 API Key')
+    if (config.kind !== 'ollama' && !config.apiKey) throw new Error('未配置 API Key')
+
+    if (config.kind === 'ollama') {
+      const url = `${apiHost}/api/tags`
+      const response = await net.fetch(url, {
+        method: 'GET',
+        signal: AbortSignal.timeout(15000)
+      })
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        throw new Error(`HTTP ${response.status} ${text.slice(0, 200)}`)
+      }
+      const data = (await response.json()) as { models?: { name?: string }[] }
+      const list = data.models ?? []
+      return list.map((m) => ({ id: m.name ?? '', name: m.name })).filter((m) => m.id)
+    }
 
     if (config.kind === 'gemini') {
       const url = `${apiHost}/models`

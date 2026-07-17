@@ -200,7 +200,7 @@ export type CodeFont =
 
 export type CodeFontSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 
-export type ProviderKind = 'deepseek' | 'nvidia' | 'mistral' | 'gemini' | 'custom'
+export type ProviderKind = 'deepseek' | 'nvidia' | 'mistral' | 'gemini' | 'ollama' | 'custom'
 
 export interface ProviderModelCapabilities {
   chat: boolean

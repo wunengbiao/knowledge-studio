@@ -5,7 +5,7 @@ import Database from 'better-sqlite3'
 import { net, app } from 'electron'
 import mammoth from 'mammoth'
 import { v4 as uuid } from 'uuid'
-import { embeddingService } from './embedding-service'
+import { embeddingService, isOllamaUrl } from './embedding-service'
 import { type MistralOcrConfig, pdfOcrService } from './pdf-ocr-service'
 import { VectorStore } from './vector-store'
 
@@ -542,7 +542,8 @@ export class DocumentService {
       .get(kbId) as
       | { embedding_model: string; embedding_api_url: string; embedding_api_key: string }
       | undefined
-    if (!kbRow || !kbRow.embedding_api_url || !kbRow.embedding_api_key) {
+    const isOllama = !!kbRow?.embedding_api_url && isOllamaUrl(kbRow.embedding_api_url)
+    if (!kbRow || !kbRow.embedding_api_url || (!isOllama && !kbRow.embedding_api_key)) {
       throw new Error('该知识库未配置 Embedding API')
     }
 
@@ -584,6 +585,8 @@ export class DocumentService {
           content: c.content
         }))
       )
+      await vectorStore.ensureFtsIndex(kbId)
+      await vectorStore.optimize(kbId)
 
       const markDone = this.db.prepare(
         "UPDATE chunks SET embedding_status = 'done', embedding_model = ?, embedding_error = '' WHERE id = ?"

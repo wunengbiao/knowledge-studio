@@ -25,8 +25,8 @@ import {
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
@@ -124,4 +124,31 @@ if (!existsSync(pngSrc)) {
     writeFileSync(installedIcns, cached)
     console.log(`[patch-electron-plist] ${installedIcns} -> project icon`)
   }
+}
+
+// --- 3. NSLocalNetworkUsageDescription (macOS Local Network Privacy prompt) ---
+// Lets the LNP permission prompt show a purpose string in dev mode (parity
+// with the packaged app's electron-builder mac.extendInfo). Without this key
+// the prompt still appears but with a generic message; with it, the user sees
+// why the app wants local network access. Ollama-over-LAN connections route
+// through net.fetch, which triggers this prompt on first use.
+const DESIRED_LNP = '应用需要访问本地网络以连接局域网内的 Ollama 等模型服务。'
+const currentLnp = readKey('NSLocalNetworkUsageDescription')
+if (currentLnp !== DESIRED_LNP) {
+  // Break hardlinks (pnpm global store) before writing. The name block above may
+  // have already done this, but re-reading + re-writing the current content is a
+  // harmless no-op in that case.
+  const original = readFileSync(plistPath)
+  unlinkSync(plistPath)
+  writeFileSync(plistPath, original)
+  // Delete (no-op if absent; stderr+exit suppressed) then Add fresh. Avoids the
+  // Set-vs-Add branching that PlistBuddy otherwise forces (Set fails when the
+  // key is missing, Add fails when it exists).
+  execSync(
+    `/usr/libexec/PlistBuddy -c "Delete :NSLocalNetworkUsageDescription" "${plistPath}" 2>/dev/null || true`
+  )
+  execSync(
+    `/usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string ${DESIRED_LNP}" "${plistPath}"`
+  )
+  console.log(`[patch-electron-plist] ${plistPath} -> NSLocalNetworkUsageDescription set`)
 }

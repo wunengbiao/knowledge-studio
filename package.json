@@ -1,7 +1,7 @@
 {
   "name": "rag-knowledge-base",
   "productName": "Knowledge Studio",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Local knowledge base with BM25 + Embedding + ReRank + GraphRAG",
   "main": "./out/main/index.js",
   "author": "",
@@ -27,13 +27,16 @@
     "apache-arrow": "^18.1.0",
     "better-sqlite3": "^11.7.0",
     "highlight.js": "^11.11.1",
+    "katex": "^0.16.47",
     "leiden-ts": "^0.1.0",
     "mammoth": "^1.9.0",
     "mermaid": "^11.15.0",
     "pdf-parse": "^1.1.1",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "turndown": "^7.2.0",
     "uuid": "^11.1.0",
     "zod": "^3.24.0"
@@ -81,7 +84,10 @@
         "dmg",
         "zip"
       ],
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "应用需要访问本地网络以连接局域网内的 Ollama 等模型服务。"
+      }
     },
     "win": {
       "icon": "resources/icon.png",
