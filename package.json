@@ -1,7 +1,7 @@
 {
   "name": "rag-knowledge-base",
   "productName": "Knowledge Studio",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Local knowledge base with BM25 + Embedding + ReRank + GraphRAG",
   "main": "./out/main/index.js",
   "author": "",

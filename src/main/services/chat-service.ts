@@ -308,6 +308,30 @@ export class ChatService {
     return rows.map(this.rowToMessage)
   }
 
+  /**
+   * Returns the next free citation index for a conversation. Citation indices
+   * are globally cumulative across the conversation so later messages can
+   * refer back to earlier citations by number without colliding.
+   */
+  private getNextCitationIndex(conversationId: string): number {
+    const rows = this.db
+      .prepare('SELECT citations FROM messages WHERE conversation_id = ? AND citations IS NOT NULL')
+      .all(conversationId) as Pick<MessageRow, 'citations'>[]
+    let max = 0
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.citations ?? '')
+        if (!Array.isArray(parsed)) continue
+        for (const c of parsed) {
+          if (c && typeof c.index === 'number' && c.index > max) max = c.index
+        }
+      } catch {
+        // ignore malformed rows
+      }
+    }
+    return max + 1
+  }
+
   async sendMessage(
     params: {
       conversationId: string
@@ -663,7 +687,10 @@ export class ChatService {
     const partialContent: string[] = []
     const partialReasoning: string[] = []
     const finalCitations: MessageCitation[] = []
-    let nextCitationIndex = 1
+    // Citations accumulate across the entire conversation so later messages
+    // can refer back to earlier citations by index without colliding. Compute
+    // the next free index from any already-persisted assistant citations.
+    let nextCitationIndex = this.getNextCitationIndex(conversationId)
     const toolSchemas = [
       ...(hasKb ? [knowledgeSearchToolSchema] : []),
       ...(webSearch ? [webSearchToolSchema] : [])
@@ -1024,9 +1051,11 @@ export class ChatService {
       const reader = response.body?.getReader()
       if (!reader) throw new Error('LLM 响应体不可读')
       const decoder = new TextDecoder()
+      const detachAbort = this.attachReaderAbort(reader, controller.signal)
       try {
         return await this.readOllamaStream(reader, decoder, onDelta, onReasoning)
       } finally {
+        detachAbort()
         reader.releaseLock()
       }
     }
@@ -1077,9 +1106,11 @@ export class ChatService {
     if (!reader) throw new Error('LLM 响应体不可读')
 
     const decoder = new TextDecoder()
+    const detachAbort = this.attachReaderAbort(reader, controller.signal)
     try {
       return await this.readStream(reader, decoder, onDelta, onReasoning)
     } finally {
+      detachAbort()
       reader.releaseLock()
     }
   }
@@ -1090,6 +1121,28 @@ export class ChatService {
     this.abortReasons.set(assistantMessageId, 'user')
     controller.abort()
     return true
+  }
+
+  /**
+   * Wire an AbortSignal to a body reader so `controller.abort()` interrupts an
+   * in-flight `reader.read()`. Electron's `net.fetch` does NOT reliably forward
+   * the abort to the body reader once streaming has begun, so without this the
+   * stop button has no effect until the server closes the connection on its own.
+   * Returns a cleanup fn that detaches the listener.
+   */
+  private attachReaderAbort(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    signal: AbortSignal
+  ): () => void {
+    const onAbort = () => {
+      reader.cancel('aborted').catch(() => {})
+    }
+    if (signal.aborted) {
+      onAbort()
+      return () => {}
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    return () => signal.removeEventListener('abort', onAbort)
   }
 
   private resolveChatEndpoint(

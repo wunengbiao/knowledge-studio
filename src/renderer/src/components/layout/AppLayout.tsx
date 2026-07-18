@@ -337,6 +337,12 @@ export function AppLayout() {
               </div>
             </div>
           )}
+          {isChatPage && (
+            <div
+              id="titlebar-citations-slot"
+              className="no-drag pointer-events-auto absolute top-0 right-3 h-full flex items-center"
+            />
+          )}
         </div>
         {backfillProgress && backfillProgress.total > 0 && (
           <div

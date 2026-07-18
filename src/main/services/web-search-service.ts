@@ -3,11 +3,14 @@ import { net } from 'electron'
 /**
  * Web search service (built-in, no API key required).
  *
- * Uses DuckDuckGo's HTML endpoint, which returns a static HTML page with
- * search results that can be parsed without an API key. This provides an
- * out-of-the-box web search experience; for production-grade search, consider
- * adding a keyed provider (Tavily / Exa / SearXNG) similar to cherry-studio's
- * WebSearchService.
+ * Uses Bing's HTML search endpoint (`cn.bing.com`), which returns a static
+ * HTML page with organic results that can be parsed without an API key.
+ * Bing is used instead of DuckDuckGo because `html.duckduckgo.com` is
+ * unreachable in mainland China (connection reset), whereas `cn.bing.com`
+ * works in both mainland China and internationally.
+ *
+ * For production-grade search, consider adding a keyed provider
+ * (Tavily / Exa / SearXNG) similar to cherry-studio's WebSearchService.
  */
 
 export interface WebSearchResult {
@@ -21,7 +24,7 @@ export interface WebSearchHit {
   formattedContext: string
 }
 
-const DDG_HTML_ENDPOINT = 'https://html.duckduckgo.com/html/'
+const BING_ENDPOINT = 'https://cn.bing.com/search'
 const MAX_RESULTS = 5
 const REQUEST_TIMEOUT_MS = 15000
 
@@ -31,24 +34,6 @@ const BROWSER_HEADERS = {
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
 } as const
-
-/**
- * DuckDuckGo wraps result URLs in a redirect: `//duckduckgo.com/l/?uddg=ENCODED_URL&...`.
- * Decode the actual target URL from the `uddg` query parameter.
- */
-function decodeDdgRedirect(href: string): string | null {
-  try {
-    const absolute = href.startsWith('//') ? `https:${href}` : href
-    const parsed = new URL(absolute)
-    const uddg = parsed.searchParams.get('uddg')
-    if (uddg) return decodeURIComponent(uddg)
-    // Some results (e.g. instant answers) link directly to external sites.
-    if (parsed.hostname !== 'duckduckgo.com') return absolute
-    return null
-  } catch {
-    return null
-  }
-}
 
 function stripHtml(html: string): string {
   return html
@@ -63,47 +48,39 @@ function stripHtml(html: string): string {
 }
 
 /**
- * Parse DuckDuckGo HTML result page. DDG renders each organic result as:
- *   <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=...">Title</a>
- *   <a class="result__snippet" href="...">Snippet text…</a>
- * We extract title/url pairs and snippets separately, then zip by index.
+ * Parse Bing HTML result page. Each organic result is a `<li class="b_algo">`
+ * block containing:
+ *   <h2><a href="URL">Title</a></h2>
+ *   <p class="b_lineclamp...">Snippet…</p>   (inside a .b_caption wrapper)
+ * We extract title/url from the h2 anchor and the first paragraph as snippet.
  */
-function parseDdgResults(html: string): WebSearchResult[] {
+function parseBingResults(html: string): WebSearchResult[] {
   const results: WebSearchResult[] = []
 
-  const linkRegex = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi
-  const snippetRegex = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi
+  const blockRegex = /<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>([\s\S]*?)<\/li>/gi
+  const titleRegex = /<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i
+  const snippetRegex = /<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/i
+  const fallbackSnippetRegex =
+    /<div[^>]*class="[^"]*b_caption[^"]*"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/i
 
-  const links: { url: string; title: string }[] = []
-  let m: RegExpExecArray | null = linkRegex.exec(html)
-  while (m !== null) {
-    const url = decodeDdgRedirect(m[1])
-    if (!url) {
-      m = linkRegex.exec(html)
+  let block: RegExpExecArray | null = blockRegex.exec(html)
+  while (block !== null && results.length < MAX_RESULTS) {
+    const body = block[1]
+    const tm = titleRegex.exec(body)
+    if (!tm) {
+      block = blockRegex.exec(html)
       continue
     }
-    const title = stripHtml(m[2])
-    if (!title) {
-      m = linkRegex.exec(html)
+    const url = tm[1]
+    const title = stripHtml(tm[2])
+    if (!title || !url) {
+      block = blockRegex.exec(html)
       continue
     }
-    links.push({ url, title })
-    m = linkRegex.exec(html)
-  }
-
-  const snippets: string[] = []
-  m = snippetRegex.exec(html)
-  while (m !== null) {
-    snippets.push(stripHtml(m[1]))
-    m = snippetRegex.exec(html)
-  }
-
-  for (let i = 0; i < links.length && results.length < MAX_RESULTS; i++) {
-    results.push({
-      title: links[i].title,
-      url: links[i].url,
-      content: snippets[i] || ''
-    })
+    const sm = snippetRegex.exec(body) || fallbackSnippetRegex.exec(body)
+    const content = sm ? stripHtml(sm[1]) : ''
+    results.push({ title, url, content })
+    block = blockRegex.exec(html)
   }
 
   return results
@@ -111,28 +88,29 @@ function parseDdgResults(html: string): WebSearchResult[] {
 
 /**
  * Search the web for the given query. Returns up to {@link MAX_RESULTS} results.
- * Never throws — on any failure (network, parse, timeout) returns an empty array
+ * Never throws - on any failure (network, parse, timeout) returns an empty array
  * so the chat flow degrades gracefully to "no web results".
  */
 export async function searchWeb(query: string): Promise<WebSearchResult[]> {
   const trimmed = query.trim()
   if (!trimmed) return []
 
-  const url = `${DDG_HTML_ENDPOINT}?q=${encodeURIComponent(trimmed)}`
+  const url = `${BING_ENDPOINT}?q=${encodeURIComponent(trimmed)}&setlang=zh-CN`
 
   try {
     const response = await net.fetch(url, {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      headers: BROWSER_HEADERS
+      headers: BROWSER_HEADERS,
+      redirect: 'follow'
     })
 
     if (!response.ok) {
-      console.error('[web-search-service] DuckDuckGo HTTP', response.status)
+      console.error('[web-search-service] Bing HTTP', response.status)
       return []
     }
 
     const html = await response.text()
-    return parseDdgResults(html)
+    return parseBingResults(html)
   } catch (e) {
     console.error('[web-search-service] search failed:', e)
     return []

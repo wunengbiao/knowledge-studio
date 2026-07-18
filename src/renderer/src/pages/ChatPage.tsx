@@ -1,6 +1,7 @@
 import type { Message, MessageCitation, MessageImage } from '@shared/types'
 import {
   AlertCircle,
+  BookMarked,
   BookOpen,
   Bot,
   ExternalLink,
@@ -17,6 +18,7 @@ import {
   X
 } from 'lucide-react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { MessageActions } from '../components/chat/MessageActions'
@@ -123,6 +125,10 @@ export function ChatPage() {
     messageId: string
     citation: MessageCitation
   } | null>(null)
+  const [citationsPanelOpen, setCitationsPanelOpen] = useState(false)
+  const [citationsPanelVisible, setCitationsPanelVisible] = useState(false)
+  const closeCitationsPanelTimerRef = useRef<number | null>(null)
+  const [titlebarSlot, setTitlebarSlot] = useState<HTMLElement | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
   const [attachedImages, setAttachedImages] = useState<MessageImage[]>([])
@@ -171,10 +177,40 @@ export function ChatPage() {
     [knowledgeBases, selectedKbIds]
   )
 
+  // Citations are globally cumulative across the conversation (backend assigns
+  // monotonically increasing indices). Aggregate every assistant message's
+  // citations into a single map so any [n] marker in any message resolves to
+  // the right source, and the side panel can list them all.
+  const globalCitationMap = useMemo(() => {
+    const map = new Map<number, MessageCitation>()
+    for (const msg of conversationMessages) {
+      if (msg.role !== 'assistant' || !msg.citations) continue
+      for (const c of msg.citations) {
+        if (!map.has(c.index)) map.set(c.index, c)
+      }
+    }
+    return map
+  }, [conversationMessages])
+
+  const globalCitationList = useMemo(
+    () => Array.from(globalCitationMap.values()).sort((a, b) => a.index - b.index),
+    [globalCitationMap]
+  )
+
   useEffect(() => {
     loadKnowledgeBases()
     loadAssistants()
   }, [loadAssistants, loadKnowledgeBases])
+
+  useEffect(() => {
+    const findSlot = () => setTitlebarSlot(document.getElementById('titlebar-citations-slot'))
+    findSlot()
+    // Retry on next tick in case the slot mounts slightly later (animated route transitions).
+    if (!document.getElementById('titlebar-citations-slot')) {
+      const id = window.setTimeout(findSlot, 0)
+      return () => window.clearTimeout(id)
+    }
+  }, [])
 
   useEffect(() => {
     if (id) {
@@ -527,321 +563,384 @@ export function ChatPage() {
     setAttachedImages((prev) => prev.filter((_, i) => i !== idx))
   }
 
+  const openCitationsPanel = useCallback(() => {
+    if (closeCitationsPanelTimerRef.current) {
+      window.clearTimeout(closeCitationsPanelTimerRef.current)
+      closeCitationsPanelTimerRef.current = null
+    }
+    setCitationsPanelOpen(true)
+    requestAnimationFrame(() => setCitationsPanelVisible(true))
+  }, [])
+
+  const closeCitationsPanel = useCallback(() => {
+    setCitationsPanelVisible(false)
+    if (closeCitationsPanelTimerRef.current) {
+      window.clearTimeout(closeCitationsPanelTimerRef.current)
+    }
+    closeCitationsPanelTimerRef.current = window.setTimeout(() => {
+      setCitationsPanelOpen(false)
+      closeCitationsPanelTimerRef.current = null
+    }, 240)
+  }, [])
+
+  const toggleCitationsPanel = useCallback(() => {
+    if (citationsPanelVisible) closeCitationsPanel()
+    else openCitationsPanel()
+  }, [citationsPanelVisible, closeCitationsPanel, openCitationsPanel])
+
   return (
-    <div className="flex flex-col h-[calc(100vh-40px)]">
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 no-drag">
-        <div className="space-y-6">
-          {conversationMessages.length === 0 && !isStreamingCurrent && (
-            <div className="text-center py-16 text-gray-400">
-              <Bot className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              {selectedKbs.length === 0 ? (
-                <>
-                  <p className="text-sm text-gray-500">{t('chat.startDirectChat')}</p>
-                  <p className="text-xs mt-1">{t('chat.noKbSelected')}</p>
-                  <p className="text-xs mt-2 text-blue-500">{t('chat.typeAtForKb')}</p>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm">{t('chat.startKbChat')}</p>
-                  <p className="text-xs mt-1">
-                    {t('chat.selectedKbsCount', { n: selectedKbs.length })}
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-
-          {conversationMessages.map((msg) => (
-            <ErrorBoundary key={msg.id}>
-              <MessageBubble
-                msg={msg}
-                sending={isStreamingCurrent}
-                streamingThis={!!streams[msg.id]}
-                isEditing={editingId === msg.id}
-                editContent={editingId === msg.id ? editContent : ''}
-                onCitationClick={setActiveCitation}
-                onStartEdit={handleStartEdit}
-                onCancelEdit={handleCancelEdit}
-                onChangeEdit={handleChangeEdit}
-                onSaveEdit={handleSaveEdit}
-                onCopy={handleCopy}
-                onDelete={handleDelete}
-                onRegenerate={handleRegenerate}
-              />
-            </ErrorBoundary>
-          ))}
-
-          {isStreamingCurrent &&
-            conversationMessages[conversationMessages.length - 1]?.role !== 'assistant' && (
-              <div className="msg-enter flex gap-3 ml-6">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slate-600 to-slate-700 flex items-center justify-center shrink-0">
-                  <BookOpen className="w-4 h-4 text-white" />
-                </div>
-                <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {t('chat.thinking')}
-                </div>
-              </div>
-            )}
-
-          {error && (
-            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <div className="flex-1 break-words">{error}</div>
-              {lastFailedSend && lastFailedSend.conversationId === currentConversationId && (
-                <button
-                  type="button"
-                  onClick={() => void retryLastFailedSend()}
-                  disabled={isStreamingCurrent}
-                  className="flex items-center gap-1 px-2 py-0.5 -mt-0.5 -mb-0.5 text-xs font-medium text-red-700 hover:text-red-800 hover:bg-red-100 rounded-md disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  {t('common.retry')}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={clearError}
-                className="text-red-400 hover:text-red-600 shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Input Area */}
-      <div className="p-4 no-drag">
-        <div className="relative">
-          {kbPickerOpen && (
-            <div className="absolute bottom-full left-2 mb-2 w-72 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-lg z-40 max-h-64 overflow-y-auto">
-              {filteredKbs.length === 0 ? (
-                <div className="px-3 py-4 text-center text-xs text-gray-400 dark:text-gray-500">
-                  {knowledgeBases.length === 0 ? t('chat.noKbs') : t('chat.noMatchingKbs')}
-                </div>
-              ) : (
-                filteredKbs.map((kb, i) => (
-                  <button
-                    key={kb.id}
-                    type="button"
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      selectKbFromPicker(kb.id)
-                    }}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
-                      i === highlightedKbIndex
-                        ? 'bg-blue-50 dark:bg-blue-950/50'
-                        : 'hover:bg-gray-50 dark:hover:bg-gray-800'
-                    }`}
-                  >
-                    <FileText className="w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-gray-900 dark:text-gray-100 truncate">{kb.name}</div>
-                      <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
-                        {t('chat.documentCount', { n: kb.documentCount })}
-                      </div>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-
-          <div className="flex items-end gap-2 border border-gray-200 rounded-2xl bg-white focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all p-2">
-            <div className="flex-1 min-w-0 relative max-h-[200px] overflow-y-auto px-1 py-1">
-              {(selectedKbs.length > 0 || attachedImages.length > 0) && (
-                <div ref={chipsRef} className="flex items-center gap-1.5 float-left mr-2">
-                  {selectedKbs.map((kb) => (
-                    <span
-                      key={kb.id}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs leading-4 max-h-5"
-                    >
-                      {kb.name}
-                      <button
-                        type="button"
-                        onMouseDown={(e) => {
-                          e.preventDefault()
-                          toggleKb(kb.id)
-                        }}
-                        className="text-blue-400 hover:text-blue-600"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                  {attachedImages.map((img, idx) => (
-                    <span
-                      key={img.dataUrl}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-50 text-purple-700 rounded-full text-xs leading-4 max-h-5"
-                    >
-                      <ImageIcon className="w-3 h-3 shrink-0" />
-                      <span className="truncate max-w-[80px]">{img.name || 'image'}</span>
-                      <button
-                        type="button"
-                        onMouseDown={(e) => {
-                          e.preventDefault()
-                          removeImage(idx)
-                        }}
-                        className="text-purple-400 hover:text-purple-600"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div
-                ref={editableRef}
-                contentEditable={!isStreamingCurrent}
-                suppressContentEditableWarning
-                onInput={handleEditableInput}
-                onKeyDown={handleEditableKeyDown}
-                onPaste={handleEditablePaste}
-                onCompositionStart={handleCompositionStart}
-                onCompositionEnd={handleCompositionEnd}
-                onBlur={() => {
-                  setTimeout(() => setKbPickerOpen(false), 150)
-                }}
-                className="block w-full outline-none text-sm leading-5 whitespace-pre-wrap break-words"
-                style={{ minHeight: '20px' }}
-              />
-              {input === '' && !isComposing && (
-                <div
-                  className="absolute top-1 left-1 text-sm text-gray-400 pointer-events-none"
-                  style={{ paddingLeft: chipsWidth > 0 ? chipsWidth + 8 : 0 }}
-                >
-                  {selectedKbs.length === 0
-                    ? t('chat.placeholderNoKb')
-                    : t('chat.placeholderWithKb')}
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              aria-label={t('chat.attachImage')}
-              className="w-9 h-9 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0"
-            >
-              <Paperclip className="w-4 h-4" />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={handleFileSelect}
-            />
-            <button
-              type="button"
-              onClick={() => setWebSearchEnabled((v) => !v)}
-              aria-label={t('chat.webSearch')}
-              aria-pressed={webSearchEnabled}
-              title={t('chat.webSearch')}
-              className={
-                webSearchEnabled
-                  ? 'w-9 h-9 flex items-center justify-center rounded-xl text-blue-600 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950/40 dark:hover:bg-blue-900/50 shrink-0 transition-colors'
-                  : 'w-9 h-9 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0 transition-colors'
-              }
-            >
-              <Globe className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={isStreamingCurrent ? handleAbort : handleSend}
-              disabled={!isStreamingCurrent && !input.trim() && attachedImages.length === 0}
-              aria-label={isStreamingCurrent ? t('chat.stop') : t('chat.send')}
-              className={
-                isStreamingCurrent
-                  ? 'stop-breathing w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 transition-colors shrink-0'
-                  : 'w-9 h-9 flex items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0'
-              }
-            >
-              {isStreamingCurrent ? (
-                <Square className="w-3 h-3" fill="currentColor" stroke="none" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-            </button>
-          </div>
-          {attachedImages.length > 0 && !modelSupportsImage && (
-            <div className="mt-1.5 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 px-1">
-              <AlertCircle className="w-3 h-3 shrink-0" />
-              {t('chat.imageNotSupported')}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Citation Popover */}
-      {activeCitation &&
-        (() => {
-          const c = activeCitation.citation
-          const isWeb = c.kind === 'web'
-          const sectionPath = !isWeb ? c.chunkTitle?.trim() || '' : ''
-          const badgeCls = isWeb
-            ? 'w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300 flex items-center justify-center shrink-0 font-semibold text-sm'
-            : 'w-8 h-8 rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300 flex items-center justify-center shrink-0 font-semibold text-sm'
-          return (
-            <>
-              <button
-                type="button"
-                aria-label={t('chat.closeCitation')}
-                className="fixed inset-0 z-40 bg-black/20"
-                onClick={() => setActiveCitation(null)}
-              />
-              <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(640px,90vw)] max-h-[70vh] bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 flex flex-col">
-                <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100 dark:border-gray-700">
-                  <div className={badgeCls}>[{c.index}]</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
-                      {isWeb ? c.title || c.url : c.docTitle}
-                    </div>
-                    {isWeb ? (
-                      <a
-                        href={c.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 hover:underline min-w-0"
-                      >
-                        <ExternalLink className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{c.url}</span>
-                      </a>
+    <>
+      {titlebarSlot &&
+        globalCitationList.length > 0 &&
+        createPortal(
+          <button
+            type="button"
+            onClick={toggleCitationsPanel}
+            aria-label={t('chat.citationsPanelToggle')}
+            title={t('chat.citationsPanelToggle')}
+            aria-pressed={citationsPanelVisible}
+            className={`inline-flex items-center gap-1.5 h-7 px-2 rounded-md text-xs font-medium transition-colors no-drag shrink-0 ${
+              citationsPanelVisible
+                ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/50 dark:text-blue-300 dark:hover:bg-blue-900/50'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800'
+            }`}
+          >
+            <BookMarked className="w-3.5 h-3.5" />
+            <span>{t('chat.citations', { n: globalCitationList.length })}</span>
+          </button>,
+          titlebarSlot
+        )}
+      <div className="flex h-[calc(100vh-40px)] relative">
+        {/* Main chat column */}
+        <div className="flex-1 flex flex-col min-w-0 relative">
+          {/* Messages */}
+          <div className="flex-1 min-h-0 relative">
+            <div ref={scrollRef} className="h-full overflow-y-auto px-6 py-6 no-drag">
+              <div className="space-y-6">
+                {conversationMessages.length === 0 && !isStreamingCurrent && (
+                  <div className="text-center py-16 text-gray-400">
+                    <Bot className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                    {selectedKbs.length === 0 ? (
+                      <>
+                        <p className="text-sm text-gray-500">{t('chat.startDirectChat')}</p>
+                        <p className="text-xs mt-1">{t('chat.noKbSelected')}</p>
+                        <p className="text-xs mt-2 text-blue-500">{t('chat.typeAtForKb')}</p>
+                      </>
                     ) : (
                       <>
-                        {sectionPath && (
-                          <div
-                            className="flex items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 min-w-0"
-                            title={sectionPath}
-                          >
-                            <Hash className="w-3 h-3 shrink-0" />
-                            <span className="truncate">{sectionPath}</span>
-                          </div>
-                        )}
-                        <div className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
-                          {t('chat.relevance', { n: Math.min(100, Math.max(0, (c.score ?? 0) * 100)).toFixed(1) })}
-                        </div>
+                        <p className="text-sm">{t('chat.startKbChat')}</p>
+                        <p className="text-xs mt-1">
+                          {t('chat.selectedKbsCount', { n: selectedKbs.length })}
+                        </p>
                       </>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveCitation(null)}
-                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto px-5 py-4 text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
-                  {c.content}
-                </div>
+                )}
+
+                {conversationMessages.map((msg) => (
+                  <ErrorBoundary key={msg.id}>
+                    <MessageBubble
+                      msg={msg}
+                      sending={isStreamingCurrent}
+                      streamingThis={!!streams[msg.id]}
+                      isEditing={editingId === msg.id}
+                      editContent={editingId === msg.id ? editContent : ''}
+                      globalCitationMap={globalCitationMap}
+                      onCitationClick={setActiveCitation}
+                      onStartEdit={handleStartEdit}
+                      onCancelEdit={handleCancelEdit}
+                      onChangeEdit={handleChangeEdit}
+                      onSaveEdit={handleSaveEdit}
+                      onCopy={handleCopy}
+                      onDelete={handleDelete}
+                      onRegenerate={handleRegenerate}
+                    />
+                  </ErrorBoundary>
+                ))}
+
+                {isStreamingCurrent &&
+                  conversationMessages[conversationMessages.length - 1]?.role !== 'assistant' && (
+                    <div className="msg-enter flex gap-3 ml-6">
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-slate-600 to-slate-700 flex items-center justify-center shrink-0">
+                        <BookOpen className="w-4 h-4 text-white" />
+                      </div>
+                      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {t('chat.thinking')}
+                      </div>
+                    </div>
+                  )}
+
+                {error && (
+                  <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div className="flex-1 break-words">{error}</div>
+                    {lastFailedSend && lastFailedSend.conversationId === currentConversationId && (
+                      <button
+                        type="button"
+                        onClick={() => void retryLastFailedSend()}
+                        disabled={isStreamingCurrent}
+                        className="flex items-center gap-1 px-2 py-0.5 -mt-0.5 -mb-0.5 text-xs font-medium text-red-700 hover:text-red-800 hover:bg-red-100 rounded-md disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        {t('common.retry')}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={clearError}
+                      className="text-red-400 hover:text-red-600 shrink-0"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
               </div>
-            </>
-          )
-        })()}
-    </div>
+            </div>
+            {citationsPanelOpen && (
+              <CitationsPanel
+                visible={citationsPanelVisible}
+                citations={globalCitationList}
+                onCitationClick={(citation) => setActiveCitation({ messageId: '', citation })}
+                onClose={closeCitationsPanel}
+              />
+            )}
+          </div>
+
+          {/* Input Area */}
+          <div className="p-4 no-drag">
+            <div className="relative">
+              {kbPickerOpen && (
+                <div className="absolute bottom-full left-2 mb-2 w-72 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-lg z-40 max-h-64 overflow-y-auto">
+                  {filteredKbs.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-xs text-gray-400 dark:text-gray-500">
+                      {knowledgeBases.length === 0 ? t('chat.noKbs') : t('chat.noMatchingKbs')}
+                    </div>
+                  ) : (
+                    filteredKbs.map((kb, i) => (
+                      <button
+                        key={kb.id}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          selectKbFromPicker(kb.id)
+                        }}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
+                          i === highlightedKbIndex
+                            ? 'bg-blue-50 dark:bg-blue-950/50'
+                            : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+                        }`}
+                      >
+                        <FileText className="w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-gray-900 dark:text-gray-100 truncate">{kb.name}</div>
+                          <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                            {t('chat.documentCount', { n: kb.documentCount })}
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-end gap-2 border border-gray-200 rounded-2xl bg-white focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all p-2">
+                <div className="flex-1 min-w-0 relative max-h-[200px] overflow-y-auto px-1 py-1">
+                  {(selectedKbs.length > 0 || attachedImages.length > 0) && (
+                    <div ref={chipsRef} className="flex items-center gap-1.5 float-left mr-2">
+                      {selectedKbs.map((kb) => (
+                        <span
+                          key={kb.id}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs leading-4 max-h-5"
+                        >
+                          {kb.name}
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault()
+                              toggleKb(kb.id)
+                            }}
+                            className="text-blue-400 hover:text-blue-600"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                      {attachedImages.map((img, idx) => (
+                        <span
+                          key={img.dataUrl}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-50 text-purple-700 rounded-full text-xs leading-4 max-h-5"
+                        >
+                          <ImageIcon className="w-3 h-3 shrink-0" />
+                          <span className="truncate max-w-[80px]">{img.name || 'image'}</span>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault()
+                              removeImage(idx)
+                            }}
+                            className="text-purple-400 hover:text-purple-600"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div
+                    ref={editableRef}
+                    contentEditable={!isStreamingCurrent}
+                    suppressContentEditableWarning
+                    onInput={handleEditableInput}
+                    onKeyDown={handleEditableKeyDown}
+                    onPaste={handleEditablePaste}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
+                    onBlur={() => {
+                      setTimeout(() => setKbPickerOpen(false), 150)
+                    }}
+                    className="block w-full outline-none text-sm leading-5 whitespace-pre-wrap break-words"
+                    style={{ minHeight: '20px' }}
+                  />
+                  {input === '' && !isComposing && (
+                    <div
+                      className="absolute top-1 left-1 text-sm text-gray-400 pointer-events-none"
+                      style={{ paddingLeft: chipsWidth > 0 ? chipsWidth + 8 : 0 }}
+                    >
+                      {selectedKbs.length === 0
+                        ? t('chat.placeholderNoKb')
+                        : t('chat.placeholderWithKb')}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label={t('chat.attachImage')}
+                  className="w-9 h-9 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0"
+                >
+                  <Paperclip className="w-4 h-4" />
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={handleFileSelect}
+                />
+                <button
+                  type="button"
+                  onClick={() => setWebSearchEnabled((v) => !v)}
+                  aria-label={t('chat.webSearch')}
+                  aria-pressed={webSearchEnabled}
+                  title={t('chat.webSearch')}
+                  className={
+                    webSearchEnabled
+                      ? 'w-9 h-9 flex items-center justify-center rounded-xl text-blue-600 bg-blue-50 hover:bg-blue-100 dark:text-blue-300 dark:bg-blue-950/40 dark:hover:bg-blue-900/50 shrink-0 transition-colors'
+                      : 'w-9 h-9 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0 transition-colors'
+                  }
+                >
+                  <Globe className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={isStreamingCurrent ? handleAbort : handleSend}
+                  disabled={!isStreamingCurrent && !input.trim() && attachedImages.length === 0}
+                  aria-label={isStreamingCurrent ? t('chat.stop') : t('chat.send')}
+                  className={
+                    isStreamingCurrent
+                      ? 'stop-breathing w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 transition-colors shrink-0'
+                      : 'w-9 h-9 flex items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0'
+                  }
+                >
+                  {isStreamingCurrent ? (
+                    <Square className="w-3 h-3" fill="currentColor" stroke="none" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+              {attachedImages.length > 0 && !modelSupportsImage && (
+                <div className="mt-1.5 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 px-1">
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  {t('chat.imageNotSupported')}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Citation Popover */}
+        {activeCitation &&
+          (() => {
+            const c = activeCitation.citation
+            const isWeb = c.kind === 'web'
+            const sectionPath = !isWeb ? c.chunkTitle?.trim() || '' : ''
+            const badgeCls = isWeb
+              ? 'w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300 flex items-center justify-center shrink-0 font-semibold text-sm'
+              : 'w-8 h-8 rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300 flex items-center justify-center shrink-0 font-semibold text-sm'
+            return (
+              <>
+                <button
+                  type="button"
+                  aria-label={t('chat.closeCitation')}
+                  className="fixed inset-0 z-40 bg-black/20"
+                  onClick={() => setActiveCitation(null)}
+                />
+                <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(640px,90vw)] max-h-[70vh] bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 flex flex-col">
+                  <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+                    <div className={badgeCls}>[{c.index}]</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
+                        {isWeb ? c.title || c.url : c.docTitle}
+                      </div>
+                      {isWeb ? (
+                        <a
+                          href={c.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 hover:underline min-w-0"
+                        >
+                          <ExternalLink className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{c.url}</span>
+                        </a>
+                      ) : (
+                        <>
+                          {sectionPath && (
+                            <div
+                              className="flex items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 min-w-0"
+                              title={sectionPath}
+                            >
+                              <Hash className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{sectionPath}</span>
+                            </div>
+                          )}
+                          <div className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+                            {t('chat.relevance', {
+                              n: Math.min(100, Math.max(0, (c.score ?? 0) * 100)).toFixed(1)
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveCitation(null)}
+                      className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-5 py-4 text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
+                    {c.content}
+                  </div>
+                </div>
+              </>
+            )
+          })()}
+      </div>
+    </>
   )
 }
 
@@ -853,6 +952,10 @@ interface MessageBubbleProps {
   streamingThis: boolean
   isEditing: boolean
   editContent: string
+  // Global citation map for the entire conversation - [n] markers in any
+  // message resolve against this, so a later message can reference citations
+  // gathered by an earlier message.
+  globalCitationMap: Map<number, MessageCitation>
   onCitationClick: CitationClickHandler
   onStartEdit: (msg: Message) => void
   onCancelEdit: () => void
@@ -869,6 +972,7 @@ const MessageBubble = memo(function MessageBubble({
   streamingThis,
   isEditing,
   editContent,
+  globalCitationMap,
   onCitationClick,
   onStartEdit,
   onCancelEdit,
@@ -879,7 +983,6 @@ const MessageBubble = memo(function MessageBubble({
   onRegenerate
 }: MessageBubbleProps) {
   const citations = msg.citations ?? []
-  const citationMap = useMemo(() => new Map(citations.map((c) => [c.index, c])), [citations])
   const isStreamingThis = msg.role === 'assistant' && msg.content === '' && !msg.reasoning
   const isReasoningStreaming = msg.role === 'assistant' && !!msg.reasoning && msg.content === ''
   const { t } = useTranslation()
@@ -930,8 +1033,8 @@ const MessageBubble = memo(function MessageBubble({
 
   const transformChildren = useCallback(
     (children: React.ReactNode) =>
-      renderCitationsInChildren(children, citationMap, msg.id, onCitationClick, t),
-    [citationMap, msg.id, onCitationClick, t]
+      renderCitationsInChildren(children, globalCitationMap, msg.id, onCitationClick, t),
+    [globalCitationMap, msg.id, onCitationClick, t]
   )
 
   return (
@@ -1049,40 +1152,6 @@ const MessageBubble = memo(function MessageBubble({
                     streaming={streamingThis}
                   />
                 )}
-
-                {citations.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-gray-100">
-                    <div className="flex items-center gap-1.5 mb-1.5 text-[11px] text-gray-400">
-                      <FileText className="w-3 h-3" />
-                      <span>{t('chat.citationSource', { n: citations.length })}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {citations.map((c) => {
-                        const isWeb = c.kind === 'web'
-                        const chipCls = isWeb
-                          ? 'group/cite inline-flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/50 dark:text-emerald-300 text-[11px] transition-colors'
-                          : 'group/cite inline-flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:hover:bg-blue-900/50 dark:text-blue-300 text-[11px] transition-colors'
-                        const badgeCls = isWeb
-                          ? 'inline-flex items-center justify-center w-[18px] h-[18px] rounded-full bg-emerald-500 group-hover/cite:bg-emerald-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors'
-                          : 'inline-flex items-center justify-center w-[18px] h-[18px] rounded-full bg-blue-500 group-hover/cite:bg-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums transition-colors'
-                        return (
-                          <CitationTooltip key={c.index} citation={c}>
-                            <button
-                              type="button"
-                              onClick={() => onCitationClick({ messageId: msg.id, citation: c })}
-                              className={chipCls}
-                            >
-                              <span className={badgeCls}>{c.index}</span>
-                              <span className="max-w-[200px] truncate">
-                                {isWeb ? c.title || c.url : c.docTitle}
-                              </span>
-                            </button>
-                          </CitationTooltip>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -1164,4 +1233,107 @@ function renderCitationsInChildren(
     process(children)
   }
   return result
+}
+
+interface CitationsPanelProps {
+  citations: MessageCitation[]
+  onCitationClick: (citation: MessageCitation) => void
+  onClose: () => void
+  visible: boolean
+}
+
+const CitationsPanel: React.FC<CitationsPanelProps> = ({
+  citations,
+  onCitationClick,
+  onClose,
+  visible
+}) => {
+  const { t } = useTranslation()
+  return (
+    <aside
+      className={`citations-panel ${visible ? 'citations-panel-visible' : ''} absolute top-0 right-0 h-full w-80 z-30 flex flex-col no-drag bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl border-l border-gray-200/80 dark:border-gray-800/80 shadow-2xl`}
+    >
+      <div className="relative flex items-center gap-2.5 px-4 h-12 border-b border-gray-100 dark:border-gray-800 shrink-0 bg-gradient-to-r from-blue-50/60 to-transparent dark:from-blue-950/25">
+        <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 shrink-0">
+          <BookMarked className="w-3.5 h-3.5" />
+        </div>
+        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex-1 min-w-0 truncate">
+          {t('chat.citationsPanelTitle')}
+        </span>
+        <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-gray-100 dark:bg-gray-800 text-[10px] font-semibold text-gray-600 dark:text-gray-400 tabular-nums shrink-0">
+          {citations.length}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={t('chat.citationsPanelClose')}
+          className="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5">
+        {citations.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-500">
+            <BookMarked className="w-8 h-8 mb-2 opacity-30" />
+            <span className="text-xs">{t('chat.citationsPanelEmpty')}</span>
+          </div>
+        ) : (
+          citations.map((c) => {
+            const isWeb = c.kind === 'web'
+            const sectionPath = !isWeb ? c.chunkTitle?.trim() || '' : ''
+            const badgeCls = isWeb
+              ? 'inline-flex items-center justify-center w-5 h-5 rounded-md bg-gradient-to-br from-emerald-400 to-emerald-600 text-white text-[10px] font-semibold leading-none tabular-nums shrink-0 shadow-sm'
+              : 'inline-flex items-center justify-center w-5 h-5 rounded-md bg-gradient-to-br from-blue-400 to-blue-600 text-white text-[10px] font-semibold leading-none tabular-nums shrink-0 shadow-sm'
+            return (
+              <button
+                type="button"
+                key={c.index}
+                onClick={() => onCitationClick(c)}
+                className="group w-full text-left rounded-xl border border-gray-200/70 dark:border-gray-800/70 bg-white dark:bg-gray-900 hover:border-blue-300 dark:hover:border-blue-700 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 hover:shadow-md px-3 py-2.5 transition-all duration-200"
+              >
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <span className={badgeCls}>{c.index}</span>
+                  <div className="flex-1 min-w-0">
+                    <div
+                      className="text-[12.5px] font-medium text-gray-900 dark:text-gray-100 truncate group-hover:text-blue-700 dark:group-hover:text-blue-300 transition-colors"
+                      title={isWeb ? c.title || c.url : c.docTitle}
+                    >
+                      {isWeb ? c.title || c.url : c.docTitle}
+                    </div>
+                    {isWeb ? (
+                      <div className="flex items-center gap-1 mt-0.5 text-[10.5px] text-emerald-600 dark:text-emerald-400 min-w-0">
+                        <Globe className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{c.url}</span>
+                      </div>
+                    ) : (
+                      <>
+                        {sectionPath && (
+                          <div
+                            className="flex items-center gap-1 mt-0.5 text-[10.5px] text-gray-500 dark:text-gray-400 min-w-0"
+                            title={sectionPath}
+                          >
+                            <Hash className="w-3 h-3 shrink-0 text-blue-400" />
+                            <span className="truncate">{sectionPath}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1 mt-0.5 text-[10.5px] text-gray-400 dark:text-gray-500">
+                          <FileText className="w-3 h-3 shrink-0" />
+                          <span>
+                            {t('chat.relevance', {
+                              n: Math.min(100, Math.max(0, (c.score ?? 0) * 100)).toFixed(1)
+                            })}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </button>
+            )
+          })
+        )}
+      </div>
+    </aside>
+  )
 }

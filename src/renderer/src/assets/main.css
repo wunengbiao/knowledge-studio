@@ -128,6 +128,22 @@ body {
   animation: pageEnter 0.34s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Citations panel slide-in/out from the right edge.
+   Two-class pattern: base sets the off-screen state, `-visible` animates
+   to the on-screen state. Mounting with only the base class then toggling
+   `-visible` on the next frame produces the enter animation; removing it
+   produces the exit animation before unmount. */
+.citations-panel {
+  transform: translateX(100%);
+  opacity: 0;
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease;
+  will-change: transform, opacity;
+}
+.citations-panel-visible {
+  transform: translateX(0);
+  opacity: 1;
+}
+
 @keyframes stopBreathing {
   0%,
   100% {
@@ -186,6 +202,11 @@ body {
   }
   .stream-cursor-breathe {
     animation: none;
+  }
+  .citations-panel {
+    transform: none;
+    opacity: 1;
+    transition: none;
   }
 }
 
