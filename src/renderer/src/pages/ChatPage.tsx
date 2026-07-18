@@ -821,7 +821,7 @@ export function ChatPage() {
                           </div>
                         )}
                         <div className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
-                          {t('chat.relevance', { n: ((c.score ?? 0) * 100).toFixed(1) })}
+                          {t('chat.relevance', { n: Math.min(100, Math.max(0, (c.score ?? 0) * 100)).toFixed(1) })}
                         </div>
                       </>
                     )}

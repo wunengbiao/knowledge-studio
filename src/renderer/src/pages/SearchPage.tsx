@@ -201,7 +201,7 @@ export function SearchPage() {
               </span>
               {sourceBadge(result.source, t)}
               <span className="text-[10px] text-gray-400">
-                {t('searchPage.relevance', { n: ((result.score / (searchResults[0]?.score || 1)) * 100).toFixed(1) })}
+                {t('searchPage.relevance', { n: Math.min(100, Math.max(0, (result.score / (searchResults[0]?.score || 1)) * 100)).toFixed(1) })}
               </span>
             </div>
             <p className="text-sm text-gray-600 leading-relaxed line-clamp-4">

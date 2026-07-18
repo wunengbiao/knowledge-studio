@@ -131,7 +131,7 @@ function CitationTooltipImpl({ citation, children }: CitationTooltipProps) {
                   <div className="flex items-center gap-1 mt-0.5 text-[10.5px] text-gray-400 dark:text-gray-500">
                     <FileText className="w-3 h-3" />
                     <span>
-                      {t('chat.relevance', { n: ((citation.score ?? 0) * 100).toFixed(1) })}
+                      {t('chat.relevance', { n: Math.min(100, Math.max(0, (citation.score ?? 0) * 100)).toFixed(1) })}
                     </span>
                   </div>
                 </>

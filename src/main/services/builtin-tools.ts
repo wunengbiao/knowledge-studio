@@ -62,7 +62,7 @@ export async function executeKnowledgeSearch(params: {
       const results = await searchService.search(
         kbId,
         query,
-        'hybrid',
+        'hybrid-expand',
         perKb,
         undefined,
         rerankModelRef,
